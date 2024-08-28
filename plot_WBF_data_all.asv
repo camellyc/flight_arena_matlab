@@ -5,29 +5,22 @@ clear all; close all; clc
 
 % === Set Variables Upfront ===
 dataFolder = 'H:\.shortcut-targets-by-id\10pxdlRXtzFB-abwDGi0jOGOFFNm3pmFK\Tuthill Lab Shared\Yichen\Spiracle\Spiracle Imaging\';
-saveFolder = 'H:\.shortcut-targets-by-id\10pxdlRXtzFB-abwDGi0jOGOFFNm3pmFK\Tuthill Lab Shared\Yichen\Spiracle\Spiracle Imaging\plots'; % Directory to save the images
-summary_title = 'spSN_ChrimsonR'; % Title for the final summary plot
-final_summary_file_name = summary_title;
+saveFolder = 'D:\Yichen\Plots'; % Directory to save the images
 
 % Plot settings
-x_limits = [-2, 10];    % X-axis limits in seconds (before and after LED ON)
+x_limits = [-0.8, 10];    % X-axis limits in seconds (before and after LED ON)
 y_limits = [-80, 20];     % Y-axis limits for WBF plots
 trace_color = [0, 0.5, 1]; % Color of the WBF traces (blue with specified RGB values)
 trace_opacity = 0.3;      % Opacity for individual traces
 stim_color = [1, 0.196, 0.353]; % Color for the stimulus region (Bright Crimson)
 smooth_window = 100;      % Smoothing window size (in samples)
-start_color = [1, 1, 1]; % Start of the gradient (e.g., white)
-end_color = [0.1804, 0.5843, 0.6];   % End of the gradient (e.g., red)
-% Blue for DN: [0, 0.502, 1] #007FFF
-% Yellow for MN: [0.8627, 0.8314, 0.1529] #DCD427
-% Magenta for IN: [0.6549, 0.1333, 0.4353] #A7226F
-% Teal for SN: [0.1804, 0.5843, 0.6] #2E9599
-% Orange for AN: [0.9569, 0.4235, 0.2471] #F46C3F
 
 % Axis and title settings
 x_title = 'Time (s)';         % X-axis label
-y_title = '\DeltaWBF (Hz)';   % Y-axis label
+y_title = '\DeltaWBF (Hz)';         % Y-axis label
 figure_title_prefix = 'Stim Duration: '; % Prefix for the figure title
+summary_title = 'DNp24\_ChrimsonR'; % Title for the final summary plot
+final_summary_file_name = summary_title;
 title_color = 'w';            % Color for the figure titles
 axis_font_size = 12;          % Font size for axis labels
 title_font_size = 14;         % Font size for figure titles
@@ -35,12 +28,6 @@ title_font_size = 14;         % Font size for figure titles
 % Timing settings
 pre_time = abs(x_limits(1)); % Seconds before LED ON
 post_time = x_limits(2);      % Seconds after LED ON
-
-% Create a folder named after summary_title under saveFolder
-outputFolder = fullfile(saveFolder, summary_title);
-if ~exist(outputFolder, 'dir')
-    mkdir(outputFolder);
-end
 
 % === User Selection for Files ===
 [files, dataFolder] = uigetfile('*.mat', 'Select the .mat files to include', dataFolder, 'MultiSelect', 'on');
@@ -233,8 +220,8 @@ for fileIdx = 1:length(files)
 
             % Save the individual figure
             file_name = [files{fileIdx}(1:end-4), '_WBF_plot_', num2str(currentStimDuration), 'ms'];
-            saveas(gcf, fullfile(outputFolder, file_name), 'png');
-            print(fullfile(outputFolder, file_name), '-dpng', '-r300');
+            saveas(gcf, fullfile(saveFolder, file_name), 'png');
+            print(fullfile(saveFolder, file_name), '-dpng', '-r300');
             close(gcf); % Close the figure after saving to free memory
         end
     end
@@ -302,13 +289,9 @@ for j = 1:length(uniqueStimDurations)
         'Color', title_color, 'FontSize', title_font_size);
 
     % Display n-number (number of files)
-    % Slightly offset from the y-axis and place near the bottom
-    x_position = x_limits(1) + 0.02 * (x_limits(2) - x_limits(1)); % Small offset from y-axis
-    y_position = y_limits(1) + 0.05 * (y_limits(2) - y_limits(1)); % Near the bottom
-
-    text(x_position, y_position, ['n = ', num2str(count)], ...
-    'VerticalAlignment', 'bottom', 'HorizontalAlignment', 'left', ...
-    'FontSize', axis_font_size, 'Color', 'w');
+    text(x_limits(1), y_limits(2), ['n = ', num2str(count)], ...
+        'VerticalAlignment', 'top', 'HorizontalAlignment', 'left', ...
+        'FontSize', axis_font_size, 'Color', 'w');
 
     hold off;
 
@@ -319,20 +302,15 @@ for j = 1:length(uniqueStimDurations)
 
     % Save the summary figure
     summary_file_name = sprintf('%s_%dms', summary_title, currentStimDuration);
-    saveas(gcf, fullfile(outputFolder, summary_file_name), 'png');
-    print(fullfile(outputFolder, summary_file_name), '-dpng', '-r300');
+    saveas(gcf, fullfile(saveFolder, summary_file_name), 'png');
+    print(fullfile(saveFolder, summary_file_name), '-dpng', '-r300');
     close(gcf); % Close the figure after saving to free memory
 end
 
 % Step 6: Create a final summary plot with all stim duration averages from all files
 figure;
 hold on;
-
-% Generate a custom colormap from start_color to end_color
-n_colors = length(uniqueStimDurations); % Number of unique stimulus durations
-colors = [linspace(start_color(1), end_color(1), n_colors)', ...
-          linspace(start_color(2), end_color(2), n_colors)', ...
-          linspace(start_color(3), end_color(3), n_colors)'];
+colors = lines(length(uniqueStimDurations)); % Use MATLAB's 'lines' colormap for distinct colors
 
 for j = 1:length(uniqueStimDurations)
     currentStimDuration = uniqueStimDurations(j);
@@ -352,54 +330,33 @@ for j = 1:length(uniqueStimDurations)
     if count > 0
         grand_average = grand_average / count;
         sem = sqrt(sem / count - (grand_average.^2)) / sqrt(count);
-
-        % Smooth the grand average and SEM
-        grand_average_smooth = smoothdata(grand_average, 'movmean', smooth_window);
-        sem_smooth = smoothdata(sem, 'movmean', smooth_window);
-
-        % Shaded SEM area, excluded from the legend
-        upper_bound = grand_average_smooth + sem_smooth;
-        lower_bound = grand_average_smooth - sem_smooth;
-        fill([time_axis, fliplr(time_axis)], [upper_bound, fliplr(lower_bound)], ...
-            colors(j, :), 'FaceAlpha', 0.2, 'EdgeColor', 'none', 'HandleVisibility', 'off'); % Exclude from legend
-
-        % Plot the smoothed grand average line, included in the legend
-        plot(time_axis, grand_average_smooth, 'LineWidth', 2, 'Color', colors(j, :), ...
-        'DisplayName', sprintf('%d ms', currentStimDuration)); % Set DisplayName for the legend
+        fill([time_axis, fliplr(time_axis)], [grand_average+sem, fliplr(grand_average-sem)], ...
+            colors(j, :), 'FaceAlpha', 0.2, 'EdgeColor', 'none'); % Shaded SEM
+        plot(time_axis, grand_average, 'LineWidth', 2, 'Color', colors(j, :), ...
+            'DisplayName', sprintf('%d ms', currentStimDuration)); % Plot with color and legend entry
     end
-
 end
 
-% Set x-axis limits from -2 to 10 seconds
-xlim(x_limits);
-xticks(0:5:10); % Set x-ticks every 5 seconds
-
-% Set y-axis limits from -80 to 20 Hz
+% Set y-axis limits
 ylim(y_limits);
-yticks(-80:40:20); % Set y-ticks every 40 Hz
 
 % Add a dashed line at y = 0
-yline(0, '--', 'Color', 'w', 'HandleVisibility', 'off');
-
-% Offset the axis intersection (shift the axes away from the origin)
-ax = gca;
-ax.Position = [0.15, 0.25, 0.7, 0.65]; % Adjust position to offset axes
-ax.XColor = 'w'; % Set x-axis color
-ax.YColor = 'w'; % Set y-axis color
+yline(0, '--', 'Color', 'w');
 
 % Set the figure background color
 set(gca, 'Color', 'k');
+set(gca, 'XColor', 'w', 'YColor', 'w', 'LineWidth', 2);
 set(gcf, 'Color', 'k');
 
 % Add labels, title, and legend
 ylabel(y_title, 'Color', 'w', 'FontSize', axis_font_size);
 xlabel(x_title, 'Color', 'w', 'FontSize', axis_font_size);
-legend_handle = legend('show', 'TextColor', 'w', 'Location', 'southeast'); % Move legend to the lower right corner
+title(summary_title, 'Color', title_color, 'FontSize', title_font_size);
+legend('show', 'TextColor', 'w', 'Location', 'southeast'); % Move legend to the lower right corner
 
-% Display n-number (number of files) above the legend
-legend_position = get(legend_handle, 'Position'); % Get the current legend position
-text(legend_position(1), legend_position(2) + legend_position(4) + 0.02, ['n = ', num2str(count)], ...
-    'Units', 'normalized', 'VerticalAlignment', 'bottom', 'HorizontalAlignment', 'left', ...
+% Display n-number (number of files)
+text(x_limits(1), y_limits(2), ['n = ', num2str(count)], ...
+    'VerticalAlignment', 'top', 'HorizontalAlignment', 'left', ...
     'FontSize', axis_font_size, 'Color', 'w');
 
 hold off;
@@ -409,7 +366,6 @@ set(gcf, 'InvertHardcopy', 'off');
 set(gca, 'Color', 'k', 'XColor', 'w', 'YColor', 'w', 'LineWidth', 2);
 set(gcf, 'Color', 'k');
 
-% Save the final summary figure as PNG and SVG in the created folder
-saveas(gcf, fullfile(outputFolder, final_summary_file_name), 'png');
-saveas(gcf, fullfile(outputFolder, final_summary_file_name), 'svg');
-print(fullfile(outputFolder, final_summary_file_name), '-dpng', '-r300');
+% Save the final summary figure
+saveas(gcf, fullfile(saveFolder, final_summary_file_name), 'png');
+print(fullfile(saveFolder, final_summary_file_name), '-dpng', '-r300');
