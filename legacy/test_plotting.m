@@ -2,7 +2,7 @@ figure;
 
 for ii =1:10
     
-    plot(data(ii,:))
+    plot(Data(ii,:))
     pause
 end 
 

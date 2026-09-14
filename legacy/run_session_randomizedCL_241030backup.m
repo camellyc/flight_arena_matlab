@@ -10,14 +10,19 @@ clear all; close all; clc
 
 %% Specify folder to save data
 saveFolder = ['H:\.shortcut-targets-by-id\10pxdlRXtzFB-abwDGi0jOGOFFNm3pmFK\Tuthill Lab Shared\Yichen\', ...
-                    'Spiracle\Spiracle Imaging\240828_DNp24_ChR\'];
+                    'Spiracle\Spiracle Imaging\241024_spMN2_GtACR_EMG\'];
+                
+% Check if the folder exists, and if not, create it
+if ~exist(saveFolder, 'dir')
+    mkdir(saveFolder);
+end
          
 %% Specify strings for FlyType
-experiment_name = 'DNp24_ChR';     % Example: spSN_ChR
-genotype = 'SS00732_3d_F';             % Example: SS48339_2d_M
-flyNumber = 'Fly5';                 % Example: Fly1
-trialNum = 'Trial1';
-stimulus_regime = '0-3000ms';   % Example: 0-3000ms
+experiment_name = 'spMN2_GtACR_EMG';     % Example: spSN_ChR
+genotype = 'VT029591_R20F02_4d_F';             % Example: SS48339_2d_M
+flyNumber = 'Fly2';                 % Example: Fly1
+trialNum = 'Trial6';
+stimulus_regime = '10000ms';   % Example: 0-3000ms
 
 %% Construct FlyType
 FlyType = [experiment_name '_' genotype '_' flyNumber '_' trialNum '_' stimulus_regime];
@@ -25,7 +30,7 @@ FlyType = [experiment_name '_' genotype '_' flyNumber '_' trialNum '_' stimulus_
 %% Declare variables
 
 % Arena variables
-CL_spatialFreq = 10; % Closed loop gain set to 6Hz
+CL_spatialFreq = -5; % Closed loop gain set to 10Hz
 L_X_Pos = 48;
 R_X_Pos = L_X_Pos;
 variables.blocks = 3;             % 3 blocks per experiment
@@ -34,8 +39,9 @@ variables.TrialLength = 60;       % seconds per trial
 % LED/laser variables
 variables.Frequency = 200;        % LED stimulation freq
 variables.PulseDuration = 2;      % Each LED pulse is 2ms long.
-stimDurations = [0, 100, 300, 1000, 3000];   % Stimulus durations (ms). You can add any numbers of stims, with variable durations.
-% stimDurations = [10000];
+%stimDurations = [0, 100, 300, 1000, 3000];   % Stimulus durations (ms). You can add any numbers of stims, with variable durations.
+stimDurations = [10000]; % "10000ms"
+%stimDurations = [0, 3000, 3000]; %"3000msx3" 
 
 % NIdaq variables
 variables.SampleRate = 20000;
@@ -69,7 +75,7 @@ mainSession.Rate = variables.SampleRate;
 % AI 1/data(3,:) : WBA right
 % AI 2/data(4,:) : WBA frequency
 % AI 3/data(5,:) : DAQ1 (arena x position)
-% AI 4/data(6,:) : AO
+% AI 4/data(6,:) : EMG recording
 % AI 5/data(7,:) : LED driver input (split ao that goes to LED)
 % AI 6/data(8,:) : Orca camera trigger input
 % AI 7/data(9,:) : Basler camera trigger input
@@ -191,14 +197,19 @@ d = dir(saveFolder);
 isFile = ~[d.isdir]; % Logical array where 'true' means it's a file
 d = d(isFile); % Keep only the file entries
 
+% Filter out files with extensions (those containing a '.')
+noExtensionFiles = d(arrayfun(@(x) isempty(regexp(x.name, '\.[^.]*$', 'once')), d));
+
 % Check if any files remain after filtering
-if isempty(d)
-    error('No files found in the specified directory.');
+if isempty(noExtensionFiles)
+    error('No files found in the specified directory without an extension.');
 end
 
-% Find the most recently modified file
-[~, idx] = max([d.datenum]);
-latestFile = d(idx).name;
+% Find the most recently modified file among the files without extensions
+[~, idx] = max([noExtensionFiles.datenum]);
+latestFile = noExtensionFiles(idx).name;
+
+disp(['Latest file without an extension: ', latestFile]);
 
 % Attempt to open the file
 fid2 = fopen([saveFolder latestFile], 'r');

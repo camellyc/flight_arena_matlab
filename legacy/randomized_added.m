@@ -9,14 +9,20 @@ closepreview
 clear all; close all; clc
 
 %% Specify folder to save data
-saveFolder = 'D:\Yichen\Spiracle_Imaging\240821_SS81923_ChR\'; % Specify your folder here
-
+saveFolder = ['H:\.shortcut-targets-by-id\10pxdlRXtzFB-abwDGi0jOGOFFNm3pmFK\Tuthill Lab Shared\Yichen\', ...
+                    'Spiracle\Spiracle Imaging\241001_spMN2_ChR\'];
+                
+% Check if the folder exists, and if not, create it
+if ~exist(saveFolder, 'dir')
+    mkdir(saveFolder);
+end
+         
 %% Specify strings for FlyType
-experiment_name = 'DNxn130_ChR';     % Example: spSN_ChR
-genotype = 'SS81923_6d_F';             % Example: SS48339_2d_M
+experiment_name = 'spMN2_ChR';     % Example: spSN_ChR
+genotype = 'VT029591_R20F02_4d_F';             % Example: SS48339_2d_M
 flyNumber = 'Fly1';                 % Example: Fly1
-trialNum = 'Trial1';
-stimulus_regime = '100-3000ms';   % Example: 100-3000ms
+trialNum = 'Trial23';
+stimulus_regime = '0-3000ms';   % Example: 0-3000ms
 
 %% Construct FlyType
 FlyType = [experiment_name '_' genotype '_' flyNumber '_' trialNum '_' stimulus_regime];
@@ -24,15 +30,18 @@ FlyType = [experiment_name '_' genotype '_' flyNumber '_' trialNum '_' stimulus_
 %% Declare variables
 
 % Arena variables
-CL_spatialFreq = 6; % Closed loop gain set to 6Hz
+CL_spatialFreq = -20; % Closed loop gain set to 6Hz
 L_X_Pos = 48;
 R_X_Pos = L_X_Pos;
-variables.blocks = 3;             % 3 trials per experiment
-variables.TrialLength = 5;       % 10s per trial
+variables.blocks = 3;             % 3 blocks per experiment
+variables.TrialLength = 60;       % seconds per trial
+
 % LED/laser variables
 variables.Frequency = 200;        % LED stimulation freq
 variables.PulseDuration = 2;      % Each LED pulse is 2ms long.
-stimDurations = [100, 300];   % Stimulus durations (ms). You can add any numbers of stims, with variable durations.
+stimDurations = [0, 100, 300, 1000, 3000];   % Stimulus durations (ms). You can add any numbers of stims, with variable durations.
+%stimDurations = [10000];
+
 % NIdaq variables
 variables.SampleRate = 20000;
 variables.Basler_fps = 100;   % Desired fps from the Basler cam
@@ -46,9 +55,9 @@ now = datetime('now','TimeZone','local');
 formatOut = 'yyyy_mmdd_HHMMSS';
 FILENAME = [saveFolder FlyType '_' datestr(now,formatOut)];
 fid1 = fopen(FILENAME,'w');
-min_out_voltage = 0.5; 
+min_out_voltage = 0.5;
 max_out_voltage = 10;  
-volt_to_code_conversion = 3276.7; 
+volt_to_code_conversion = 3276.7;
 min_out_code = min_out_voltage*volt_to_code_conversion;
 max_out_code = max_out_voltage*volt_to_code_conversion;
 analog_output_codes = linspace(min_out_code,max_out_code,variables.conditions);
@@ -60,9 +69,22 @@ deviceID=devices.ID;
 
 mainSession = daq.createSession('ni');
 mainSession.Rate = variables.SampleRate;
-addAnalogInputChannel(mainSession,deviceID,[0 1 2 3 4 5 6 7],'Voltage');
-ch = addAnalogInputChannel(mainSession,deviceID,'ai9','Voltage');
+
+% AI 0/data(2,:) : WBA left
+% AI 1/data(3,:) : WBA right
+% AI 2/data(4,:) : WBA frequency
+% AI 3/data(5,:) : DAQ1 (arena x position)
+% AI 4/data(6,:) : AO
+% AI 5/data(7,:) : LED driver input (split ao that goes to LED)
+% AI 6/data(8,:) : Orca camera trigger input
+% AI 7/data(9,:) : Basler camera trigger input
+% AI 8/data(10,:) : AO1 (LED trigger output)
+
+% AO 0: Orca camera trigger output
+% AO 1: LED trigger output
+addAnalogInputChannel(mainSession,deviceID,[0 1 2 3 4 5 6 7],'Voltage'); % Added AO1 as an input channel
 addAnalogOutputChannel(mainSession,deviceID,'ao1','Voltage');
+% addAnalogOutputChannel(mainSession,deviceID,'ao0','Voltage');
 
 % Trigger the camera
 camTrigger = addCounterOutputChannel(mainSession, deviceID, 'ctr0', 'PulseGeneration');
@@ -70,11 +92,11 @@ camTrigger.Frequency = variables.Basler_fps;
 camTrigger.InitialDelay = 0.05; % Ensure we capture the first frame
 
 figure(1); clf;
-lh = addlistener(mainSession,'DataAvailable', @plotData);
+lh = addlistener(mainSession,'DataAvailable', @(src,event)plotDataWithAO1(src, event)); % Updated listener to plot AO1
 lh2 = addlistener(mainSession,'DataAvailable',@(src,event)logData(src,event,fid1));
 
 %% Initialize camera options
-vidDir = 'D:\Yichen\Spiracle_Imaging\240821_SS81923_ChR\Videos\'; % Specify your video folder here
+vidDir = saveFolder; % Specify your video folder here
 blankvidFile = [vidDir FlyType '_' datestr(now,formatOut)];
 
 sideCam = videoinput('gentl', 1, 'Mono8');
@@ -86,7 +108,7 @@ sideCam_src = getselectedsource(sideCam);
 
 sideCam_src.LineSelector = 'Line4';
 sideCam_src.LineMode = 'input';
-sideCam_src.LineInverter = 'True'; 
+sideCam_src.LineInverter = 'True';
 sideCam_src.TriggerSelector = 'FrameStart';
 sideCam_src.TriggerMode = 'Off';
 sideCam_src.TriggerSource = 'Line4';
@@ -141,7 +163,7 @@ for block = 1:variables.blocks
 
     tic
     Panel_com('set_pattern_id', 14); pause(panel_pause);
-    Panel_com('set_mode', [1, 0]); pause(panel_pause); 
+    Panel_com('set_mode', [1, 0]); pause(panel_pause);
     Panel_com('set_position', [R_X_Pos 1]); pause(panel_pause);
     Panel_com('send_gain_bias',[variables.CL_X_gain,0,0,0]); pause(panel_pause);
     Panel_com('set_ao',[4, analog_output_codes(1)]); pause(panel_pause);
@@ -164,8 +186,13 @@ delete(lh2);
 
 %% Save data and video
 camData = getdata(sideCam, sideCam.FramesAvailable);
+disp(['Total frames captured: ', num2str(size(camData, 4))]); % Display how many frames were captured for debugging.
 open(sideCam_Logger)
-writeVideo(sideCam_Logger, camData);
+if ndims(camData) == 4
+    writeVideo(sideCam_Logger, squeeze(camData));
+else
+    error('camData does not have the expected dimensions. Please check the video capture settings.');
+end
 close(sideCam_Logger)
 
 d = dir(saveFolder);
@@ -189,11 +216,27 @@ if fid2 == -1
     error('Failed to open the file. Check the file path and permissions.');
 end
 
-[Data, count] = fread(fid2, [10, inf], 'double');
+[Data, count] = fread(fid2, [10, inf], 'double'); % Updated to read 10 channels
 fclose(fid2);
+
+% Store the randomized stimulus as a new row, data(11,:)
+data = [Data; cell2mat(allRandomizedStimOrders')];
 
 formatOut = 'yyyy_mmdd_HHMMSS';
 savedate = datestr(now,formatOut);
 baseFileName = strcat(FlyType,'_',savedate);
 fpath = strcat(saveFolder, baseFileName);
-save(fpath,'Data','variables','allRandomizedStimOrders'); % Save all randomized stimulus orders for later analysis
+save(fpath,'data','variables','allRandomizedStimOrders'); % Save all randomized stimulus orders for later analysis
+
+%% Plot Data with AO1
+function plotDataWithAO1(src, event)
+    figure(1);
+    plot(event.TimeStamps, event.Data(:,2:4));
+    hold on;
+    plot(event.TimeStamps, event.Data(:,5:7));
+    plot(event.TimeStamps, event.Data(:,10));
+    hold off;
+    title('WBA left, right, frequency, Arena X position, AO, LED driver input, AO1 (LED trigger output)');
+    xlabel('Time (s)'); ylabel('Voltage (V)');
+    legend({'WBA Left','WBA Right','WBA Frequency','Arena X Position','AO','LED Driver Input','AO1 (LED Trigger Output)'});
+end

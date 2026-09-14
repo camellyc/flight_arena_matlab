@@ -1,12 +1,17 @@
 % Author: Yichen Luo 8/2024
 % Plot wingbeat frequency data, before, during, and after optogenetic
 % stimulus delivery. Summarize all data across flies and plot the mean.
+% NOTE (2026-09): windowed opto stimuli (run_session_unified.m opto.mode 'windows'
+% or 'both'; stimTable source == 2) are EXCLUDED from this analysis via
+% exclude_window_stims.m. Only randomized stimuli are analysed for now.
+% Data rows are resolved by signal name via data_rows.m (run_session_unified files
+% carry the channel names; older files fall back to rows 2/3/4/7).
 clear all; close all; clc
 
 % === Set Variables Upfront ===
-dataFolder = 'H:\.shortcut-targets-by-id\10pxdlRXtzFB-abwDGi0jOGOFFNm3pmFK\Tuthill Lab Shared\Yichen\Spiracle\Spiracle Imaging\';
-saveFolder = 'H:\.shortcut-targets-by-id\10pxdlRXtzFB-abwDGi0jOGOFFNm3pmFK\Tuthill Lab Shared\Yichen\Spiracle\Spiracle Imaging\plots'; % Directory to save the images
-summary_title = 'spSN_ChrimsonR'; % Title for the final summary plot
+dataFolder = 'H:\.shortcut-targets-by-id\10pxdlRXtzFB-abwDGi0jOGOFFNm3pmFK\Tuthill Lab Shared\Yichen\Spiracle\Flight_Arena_Data\';
+saveFolder = 'H:\.shortcut-targets-by-id\10pxdlRXtzFB-abwDGi0jOGOFFNm3pmFK\Tuthill Lab Shared\Yichen\Spiracle\Flight_Arena_Data\plots'; % Directory to save the images
+summary_title = 'ThSN2_ChR'; % Title for the final summary plot
 final_summary_file_name = summary_title;
 
 % Plot settings
@@ -14,15 +19,16 @@ x_limits = [-2, 10];    % X-axis limits in seconds (before and after LED ON)
 y_limits = [-80, 20];     % Y-axis limits for WBF plots
 trace_color = [0, 0.5, 1]; % Color of the WBF traces (blue with specified RGB values)
 trace_opacity = 0.3;      % Opacity for individual traces
-stim_color = [1, 0.196, 0.353]; % Color for the stimulus region (Bright Crimson)
+stim_color = [1, 0.196, 0.353]; % Color for the stimulus region [1, 0.196, 0.353]for Chrimson, [0.404, 1, 0.345] for GtACR 
 smooth_window = 100;      % Smoothing window size (in samples)
 start_color = [1, 1, 1]; % Start of the gradient (e.g., white)
-end_color = [0.1804, 0.5843, 0.6];   % End of the gradient (e.g., red)
-% Blue for DN: [0, 0.502, 1] #007FFF
-% Yellow for MN: [0.8627, 0.8314, 0.1529] #DCD427
-% Magenta for IN: [0.6549, 0.1333, 0.4353] #A7226F
-% Teal for SN: [0.1804, 0.5843, 0.6] #2E9599
-% Orange for AN: [0.9569, 0.4235, 0.2471] #F46C3F
+end_color = [0.941, 0.894, 0.259];   % End of the gradient (e.g., red)
+% Blue for DN: [0, 0.447, 0.698] #0072B2
+% Yellow for MN: [0.941, 0.894, 0.259] #F0E442
+% Magenta for IN: [0.8, 0.475, 0.655] #CC79A7
+% Teal for SN: [0, 0.620, 0.451] #009E73
+% Orange for AN: [0.835, 0.369, 0] #D55E00
+% Grey for control: [0.5, 0.5, 0.5] #808080
 
 % Axis and title settings
 x_title = 'Time (s)';         % X-axis label
@@ -57,23 +63,22 @@ for fileIdx = 1:length(files)
     dataFile = fullfile(dataFolder, files{fileIdx});
     dataDoubleFile = strrep(dataFile, '.mat', ''); % Replace '.mat' with '' (or other double file extension)
 
-    % Check if the data file exists
-    if ~isfile(dataDoubleFile)
-        warning('The corresponding data file for %s was not found. Skipping this file.', files{fileIdx});
-        continue;
-    end
-
     % Load the .mat file for variables and allRandomizedStimOrders
     load(dataFile, 'allRandomizedStimOrders', 'variables');
+    dr = data_rows(dataFile);   % Data row per signal (by name for run_session_unified files, legacy rows otherwise)
 
-    % Load the Data from the double file
-    fid = fopen(dataDoubleFile, 'r');
-    if fid == -1
-        warning('Failed to open the double data file: %s. Skipping this file.', dataDoubleFile);
+    % Load Data: from the .mat when it is stored there (run_session_unified and
+    % later sessions), otherwise fall back to the legacy binary double file
+    if ~isempty(whos('-file', dataFile, 'Data'))
+        load(dataFile, 'Data');
+    elseif isfile(dataDoubleFile)
+        fid = fopen(dataDoubleFile, 'r');
+        Data = fread(fid, [9, inf], 'double');
+        fclose(fid);
+    else
+        warning('No Data variable in %s and no binary data file next to it. Skipping this file.', dataFile);
         continue;
     end
-    Data = fread(fid, [9, inf], 'double');
-    fclose(fid);
 
     % Extract the variables from the struct
     fs = variables.SampleRate; % Sampling rate
@@ -84,10 +89,18 @@ for fileIdx = 1:length(files)
 
     % Step 1: Identify all potential LED ON events for non-zero stimuli
     led_on_indices = [];
-    for k = 1:length(Data(7,:)) - pulse_interval
-        if Data(7,k) > 9 && all(Data(7,k-pulse_interval:k-1) < 1) && any(Data(7,k:k+pulse_interval-1) > 9)
+    for k = 1:length(Data(dr.led,:)) - pulse_interval
+        if Data(dr.led,k) > 9 && all(Data(dr.led,k-pulse_interval:k-1) < 1) && any(Data(dr.led,k:k+pulse_interval-1) > 9)
             led_on_indices = [led_on_indices, k];
         end
+    end
+
+    % Step 1b: Windowed stimuli (run_session_unified.m opto.mode 'windows'/'both',
+    % stimTable source == 2) are NOT analysed here. Drop their LED ON events so
+    % they cannot be paired with the randomized stimulus list.
+    [led_on_indices, nWindowEvents] = exclude_window_stims(led_on_indices, dataFile, fs);
+    if nWindowEvents > 0
+        fprintf('  Excluded %d LED ON event(s) from windowed stimuli (not analysed).\n', nWindowEvents);
     end
 
     % Step 2: Match LED ON events with corresponding stim durations, handle 0 ms separately
@@ -99,26 +112,70 @@ for fileIdx = 1:length(files)
         randomizedOrder = allRandomizedStimOrders{block}; % Get the stim durations for this block
         num_stims = length(randomizedOrder); % Number of stimuli in this block
         block_indices = [];
-        
-        for stimIdx = 1:num_stims
-            currentStimDuration = randomizedOrder(stimIdx);
-            
-            if currentStimDuration > 0
-                % Handle non-zero stimuli
-                if event_index <= length(led_on_indices)
-                    block_indices = [block_indices, led_on_indices(event_index)];
-                    event_index = event_index + 1;
-                else
-                    warning('Not enough LED ON events detected for block %d', block);
+
+        % Estimate block length by finding the range of timestamps in the current block
+        % First, find approximate block boundaries (if not already known)
+        if block == 1
+            block_start_idx = 1;
+        else
+            % Estimate based on proportion of data length
+            block_start_idx = round((block-1) * length(Data(dr.led,:)) / blocks) + 1;
+        end
+
+        if block == blocks
+            block_end_idx = length(Data(dr.led,:));
+        else
+            block_end_idx = round(block * length(Data(dr.led,:)) / blocks);
+        end
+
+        % Calculate block length based on this range (in samples)
+        block_length_samples = block_end_idx - block_start_idx + 1;
+
+        % Refine block boundaries by looking at LED activity if possible
+        % This helps find the actual block starts/ends if they're not perfectly evenly spaced
+        if block < blocks
+            % Look for a gap in LED activity that marks the end of this block
+            for i = block_end_idx-fs*5:min(block_end_idx+fs*5, length(Data(dr.led,:))-fs*5)
+                if sum(Data(dr.led,i:i+fs*5) > 1) == 0  % If there's a 5-second period with no LED activity
+                    block_end_idx = i;
+                    break;
                 end
-            else
-                % Handle 0 ms stimuli (no actual LED ON event)
-                % Assume the 0 ms event happens at the expected time in the trial
-                expected_index = (stimIdx - 1) * (variables.TrialLength / num_stims) * fs + pre_samples + 1;
-                block_indices = [block_indices, round(expected_index)];
             end
         end
-        
+
+        % Calculate stimulus times based on the detected block length
+        interval = block_length_samples / (num_stims + 1) / fs;  % interval in seconds
+        expected_stim_times = zeros(1, num_stims);
+
+        for i = 1:num_stims
+            % Calculate exact stimulus time in samples, relative to block start
+            stim_time_in_block = round(interval * i * fs);
+            expected_stim_times(i) = block_start_idx + stim_time_in_block;
+        end
+
+        % Find LED ON events that fall within this block's bounds
+        block_led_indices = led_on_indices(led_on_indices >= block_start_idx & led_on_indices <= block_end_idx);
+        local_event_index = 1;  % Index for LED events within this block
+
+        for stimIdx = 1:num_stims
+            currentStimDuration = randomizedOrder(stimIdx);
+
+            if currentStimDuration > 0
+                % Handle non-zero stimuli by using detected LED ON events within this block
+                if local_event_index <= length(block_led_indices)
+                    block_indices = [block_indices, block_led_indices(local_event_index)];
+                    local_event_index = local_event_index + 1;
+                else
+                    warning('Not enough LED ON events detected for block %d, stimulus %d. Using calculated time.', block, stimIdx);
+                    % Fall back to the calculated time point
+                    block_indices = [block_indices, expected_stim_times(stimIdx)];
+                end
+            else
+                % Handle 0 ms stimuli by using the calculated time point
+                block_indices = [block_indices, expected_stim_times(stimIdx)];
+            end
+        end
+
         stimulus_indices{block} = block_indices; % Assign indices to the block
         stimulus_durations{block} = randomizedOrder; % Corresponding stimulus durations
     end
@@ -142,13 +199,13 @@ for fileIdx = 1:length(files)
 
                 % Ensure indices are within valid range
                 if start_idx < 1, start_idx = 1; end
-                if end_idx > length(Data(4,:)), end_idx = length(Data(4,:)); end
+                if end_idx > length(Data(dr.wbf,:)), end_idx = length(Data(dr.wbf,:)); end
 
                 % Extract and smooth the WBF data
-                wbf_segment = floor(Data(4, start_idx:end_idx) * 100); % WBF
+                wbf_segment = floor(Data(dr.wbf, start_idx:end_idx) * 100); % WBF
                 smoothed_wbf = smoothdata(wbf_segment, 'movmean', smooth_window); % Smoothing
 
-                % Adjust the segment by subtracting the baseline (mean WBF 0.5 sec before LED ON)
+                % Adjust the segment by subtracting the baseline (mean WBF 2 sec before LED ON)
                 baseline_wbf = mean(smoothed_wbf(1:min(pre_samples, length(smoothed_wbf))));
                 adjusted_wbf = smoothed_wbf - baseline_wbf;
 
@@ -191,13 +248,15 @@ for fileIdx = 1:length(files)
             % Set y-axis limits
             ylim(y_limits);
             
+            % Shade the stim_length region, spanning the full y-axis range
+            stim_start_time = 0; % Start at the LED ON time
+            stim_end_time = stim_start_time + (currentStimDuration / 1000); % End after the duration of stim_length
+            fill([stim_start_time, stim_end_time, stim_end_time, stim_start_time], ...
+                 [y_limits(1), y_limits(1), y_limits(2), y_limits(2)], ...
+                 stim_color, 'FaceAlpha', 0.3, 'EdgeColor', 'none');
+            
             % Add a dashed line at y = 0
             yline(0, '--', 'Color', 'w');
-            
-            % Set the figure background color
-            set(gca, 'Color', 'k');
-            set(gca, 'XColor', 'w', 'YColor', 'w', 'LineWidth', 2);
-            set(gcf, 'Color', 'k');
 
             % Plot traces from each block with thinner lines and lighter shade
             for block = 1:blocks
@@ -211,13 +270,11 @@ for fileIdx = 1:length(files)
             % Plot the mean WBF trace across all blocks with thicker line
             plot(time_axis, mean_wbf, 'LineWidth', 2, 'Color', trace_color); % Solid blue line
 
-            % Shade the stim_length region, spanning the full y-axis range
-            stim_start_time = 0; % Start at the LED ON time
-            stim_end_time = stim_start_time + (currentStimDuration / 1000); % End after the duration of stim_length
-            fill([stim_start_time, stim_end_time, stim_end_time, stim_start_time], ...
-                 [y_limits(1), y_limits(1), y_limits(2), y_limits(2)], ...
-                 stim_color, 'FaceAlpha', 0.3, 'EdgeColor', 'none');
-
+            % Set the figure background color
+            set(gca, 'Color', 'k');
+            set(gca, 'XColor', 'w', 'YColor', 'w', 'LineWidth', 2);
+            set(gcf, 'Color', 'k');
+            
             % Set labels and title
             ylabel(y_title, 'Color', 'w', 'FontSize', axis_font_size);
             xlabel(x_title, 'Color', 'w', 'FontSize', axis_font_size);
@@ -250,7 +307,14 @@ for j = 1:length(uniqueStimDurations)
     figure;
     hold on;
     time_axis = linspace(x_limits(1), x_limits(2), length(mean_wbf)); % Assuming all files have the same time axis length
-
+   
+    % Shade the stim_length region, spanning the full y-axis range
+    stim_start_time = 0; % Start at the LED ON time
+    stim_end_time = stim_start_time + (currentStimDuration / 1000); % End after the duration of stim_length
+    fill([stim_start_time, stim_end_time, stim_end_time, stim_start_time], ...
+         [y_limits(1), y_limits(1), y_limits(2), y_limits(2)], ...
+         stim_color, 'FaceAlpha', 0.3, 'EdgeColor', 'none');
+     
     % Plot individual files' data as shaded curves
     for fileIdx = 1:length(summary_data)
         file_data = summary_data(fileIdx).data;
@@ -287,13 +351,6 @@ for j = 1:length(uniqueStimDurations)
     set(gca, 'Color', 'k');
     set(gca, 'XColor', 'w', 'YColor', 'w', 'LineWidth', 2);
     set(gcf, 'Color', 'k');
-
-    % Shade the stim_length region, spanning the full y-axis range
-    stim_start_time = 0; % Start at the LED ON time
-    stim_end_time = stim_start_time + (currentStimDuration / 1000); % End after the duration of stim_length
-    fill([stim_start_time, stim_end_time, stim_end_time, stim_start_time], ...
-         [y_limits(1), y_limits(1), y_limits(2), y_limits(2)], ...
-         stim_color, 'FaceAlpha', 0.3, 'EdgeColor', 'none');
 
     % Set labels and title
     ylabel(y_title, 'Color', 'w', 'FontSize', axis_font_size);

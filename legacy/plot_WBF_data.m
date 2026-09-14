@@ -19,8 +19,8 @@ stim_length_seconds = stim_length / 1000; % Convert to seconds
 
 % Find the LED ON indices
 led_on_indices = [];
-for i = pulse_interval+1:length(data(7,:))-pulse_interval
-    if data(7,i) > 9 && all(data(7,i-pulse_interval:i-1) < 1) && any(data(7,i:i+pulse_interval-1) > 9)
+for i = pulse_interval+1:length(Data(7,:))-pulse_interval
+    if Data(7,i) > 9 && all(Data(7,i-pulse_interval:i-1) < 1) && any(Data(7,i:i+pulse_interval-1) > 9)
         led_on_indices = [led_on_indices, i];
     end
 end
@@ -44,12 +44,12 @@ if ~isempty(led_on_indices)
         if start_idx < 1
             start_idx = 1;
         end
-        if end_idx > length(data(4,:))
-            end_idx = length(data(4,:));
+        if end_idx > length(Data(4,:))
+            end_idx = length(Data(4,:));
         end
 
         % Extract and smooth the WBF data
-        wbf_segment = floor(data(4, start_idx:end_idx) * 100); % Actual WBF
+        wbf_segment = floor(Data(4, start_idx:end_idx) * 100); % Actual WBF
         smoothed_wbf = smoothdata(wbf_segment, 'movmean', smooth_window); % Smoothing
 
         % Adjust the segment by subtracting the baseline (mean WBF 0.5 sec before LED ON)

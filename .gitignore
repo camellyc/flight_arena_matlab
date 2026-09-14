@@ -1,0 +1,18 @@
+# Vendor SDK binaries (Phantom / Vision Research) - too large and not redistributable
+SDK 13.11.11.806/
+
+# MATLAB autosave / temp
+*.asv
+*.m~
+*.autosave
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+Thumbs.db
+.DS_Store

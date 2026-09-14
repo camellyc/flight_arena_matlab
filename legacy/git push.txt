@@ -1,0 +1,7 @@
+cd /d/Yichen/Code                     # Navigate to your project directory
+git init                              # Initialize Git (if needed)
+git remote add origin https://github.com/camellyc/Flight_Arena.git  # Add remote (if not already added)
+git checkout -b Flight_Arena_PC       # Check out or create the branch
+git add .                             # Stage all changes
+git commit -m "Updated code for Flight_Arena_PC branch"  # Commit the changes
+git push origin Flight_Arena_PC       # Push the changes to the remote repository

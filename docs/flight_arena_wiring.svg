@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1240 700" width="1240" height="700" font-family="Arial, Helvetica, sans-serif">
+  <title>Flight arena wiring, SCB-68A on PCIe-6321, September 2026</title>
+  <desc>Wiring between the DAQ terminal block, the wingbeat analyzer, arena controller, EMG amplifier, LED driver, Basler cameras, frame-sync generator and Phantom camera, with SCB-68A terminal numbers on every wire.</desc>
+  <style>
+    .box   { fill:#FBFCFB; stroke:#C9D1D3; stroke-width:1.2; }
+    .scb   { fill:#FFFFFF; stroke:#1F262B; stroke-width:1.5; }
+    .t     { fill:#1F262B; font-size:12px; }
+    .t-title { fill:#1F262B; font-size:13px; font-weight:bold; }
+    .t-port  { fill:#5C6B73; font-size:11px; }
+    .pin   { fill:#1F262B; font-family:Consolas, "Courier New", monospace; font-size:11.5px; }
+    .pinnum{ fill:#1F262B; font-family:Consolas, "Courier New", monospace; font-size:12px; font-weight:bold; }
+    .w     { fill:none; stroke-width:2; }
+    .w-ai  { stroke:#1E7F8C; }  .w-ao { stroke:#B6394A; }  .w-dig { stroke:#B7791F; }
+    .w-data{ stroke:#7C8A92; stroke-width:1.4; stroke-dasharray:5 4; }
+    .dot-ai{ fill:#1E7F8C; }  .dot-ao{ fill:#B6394A; }  .dot-dig{ fill:#B7791F; }
+    .wl    { font-size:10.5px; fill:#5C6B73; }
+    .rule  { stroke:#C9D1D3; stroke-width:1; }
+    .warn  { fill:#B6394A; font-size:12px; }
+    .leg   { fill:#5C6B73; font-size:12px; }
+  </style>
+  <defs>
+    <marker id="arr-ai" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1E7F8C"/></marker>
+    <marker id="arr-ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B6394A"/></marker>
+    <marker id="arr-dig" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B7791F"/></marker>
+  </defs>
+  <rect width="1240" height="700" fill="#FFFFFF"/>
+
+  <!-- ===== SCB-68A terminal block ===== -->
+  <g id="scb68a">
+    <rect class="scb" x="470" y="58" width="300" height="470" rx="3"/>
+    <text class="t-title" x="620" y="78" text-anchor="middle">SCB-68A  ·  screw terminals</text>
+    <line class="rule" x1="470" y1="86" x2="770" y2="86"/>
+    <text class="pin" x="482" y="108">AI1</text>  <text class="pinnum" x="530" y="108">33</text> <text class="t" x="566" y="108">WBF</text>
+    <text class="pin" x="482" y="135">AI2</text>  <text class="pinnum" x="530" y="135">65</text> <text class="t" x="566" y="135">WBA left</text>
+    <text class="pin" x="482" y="162">AI3</text>  <text class="pinnum" x="530" y="162">30</text> <text class="t" x="566" y="162">WBA right</text>
+    <text class="pin" x="482" y="189">AI4</text>  <text class="pinnum" x="530" y="189">28</text> <text class="t" x="566" y="189">Hutchen left</text>
+    <text class="pin" x="482" y="216">AI5</text>  <text class="pinnum" x="530" y="216">60</text> <text class="t" x="566" y="216">Hutchen right</text>
+    <text class="pin" x="482" y="243">AI6</text>  <text class="pinnum" x="530" y="243">25</text> <text class="t" x="566" y="243">Arena X position</text>
+    <text class="pin" x="482" y="270">AI7</text>  <text class="pinnum" x="530" y="270">57</text> <text class="t" x="566" y="270">Arena Y position</text>
+    <text class="pin" x="482" y="297">AI8</text>  <text class="pinnum" x="530" y="297">34</text> <text class="t" x="566" y="297">EMG</text>
+    <text class="pin" x="482" y="324">AO0</text>  <text class="pinnum" x="530" y="324">22</text> <text class="t" x="566" y="324">LED command out</text>
+    <text class="pin" x="482" y="351">AI0</text>  <text class="pinnum" x="530" y="351">68</text> <text class="t" x="566" y="351">LED monitor (tee)</text>
+    <text class="pin" x="482" y="378">PFI12</text><text class="pinnum" x="530" y="378">2</text>  <text class="t" x="566" y="378">Basler trigger (ctr0)</text>
+    <text class="pin" x="482" y="405">AI9</text>  <text class="pinnum" x="530" y="405">66</text> <text class="t" x="566" y="405">Basler trigger (tee)</text>
+    <text class="pin" x="482" y="432">AI11</text> <text class="pinnum" x="530" y="432">63</text> <text class="t" x="566" y="432">Basler shutter</text>
+    <text class="pin" x="482" y="459">AO1</text>  <text class="pinnum" x="530" y="459">21</text> <text class="t" x="566" y="459">Phantom trigger out</text>
+    <text class="pin" x="482" y="486">AI10</text> <text class="pinnum" x="530" y="486">31</text> <text class="t" x="566" y="486">Phantom F-Sync (tee)</text>
+    <text class="pin" x="482" y="513">AI14</text> <text class="pinnum" x="530" y="513">58</text> <text class="t" x="566" y="513">Phantom Recording</text>
+  </g>
+
+  <!-- ===== Sources (left) ===== -->
+  <g id="wingbeat-analyzer">
+    <rect class="box" x="40" y="86" width="260" height="146" rx="3"/>
+    <text class="t-title" x="52" y="105">Wingbeat analyzer</text>
+    <text class="t-port" x="52" y="126">WBF out</text>
+    <text class="t-port" x="52" y="153">WBA left</text>
+    <text class="t-port" x="52" y="180">WBA right</text>
+    <text class="t-port" x="52" y="207">Hutchen left</text>
+    <text class="t-port" x="52" y="228">Hutchen right</text>
+    <path class="w w-ai" d="M300,122 L470,104" marker-end="url(#arr-ai)"/>
+    <path class="w w-ai" d="M300,149 L470,131" marker-end="url(#arr-ai)"/>
+    <path class="w w-ai" d="M300,176 L470,158" marker-end="url(#arr-ai)"/>
+    <path class="w w-ai" d="M300,203 L470,185" marker-end="url(#arr-ai)"/>
+    <path class="w w-ai" d="M300,224 L470,212" marker-end="url(#arr-ai)"/>
+  </g>
+  <g id="arena-controller">
+    <rect class="box" x="40" y="246" width="260" height="56" rx="3"/>
+    <text class="t-title" x="52" y="265">Arena controller (panels)</text>
+    <text class="t-port" x="52" y="284">X pos out</text>
+    <text class="t-port" x="150" y="284">Y pos out</text>
+    <path class="w w-ai" d="M300,262 L470,239" marker-end="url(#arr-ai)"/>
+    <path class="w w-ai" d="M300,282 L470,266" marker-end="url(#arr-ai)"/>
+    <path class="w w-data" d="M60,232 L60,246"/>
+    <text class="wl" x="66" y="243">WBA L−R → controller ADC (closed loop, direct)</text>
+  </g>
+  <g id="emg-amplifier">
+    <rect class="box" x="40" y="312" width="260" height="34" rx="3"/>
+    <text class="t-title" x="52" y="334">EMG amplifier</text>
+    <text class="t-port" x="200" y="334">signal out</text>
+    <path class="w w-ai" d="M300,329 L470,293" marker-end="url(#arr-ai)"/>
+  </g>
+  <g id="led-driver">
+    <rect class="box" x="40" y="356" width="260" height="60" rx="3"/>
+    <text class="t-title" x="52" y="375">LED driver</text>
+    <text class="t-port" x="52" y="396">command in</text>
+    <text class="t-port" x="52" y="410">→ opto LED (fly)</text>
+    <path class="w w-ao" d="M470,320 L430,320 L430,386 L300,386" marker-end="url(#arr-ao)"/>
+    <circle class="dot-ao" cx="430" cy="347" r="3.5"/>
+    <path class="w w-ao" d="M430,347 L470,347" marker-end="url(#arr-ao)"/>
+    <text class="wl" x="322" y="380">AO0 → driver; tee → AI0</text>
+  </g>
+
+  <!-- ===== Cameras (right) ===== -->
+  <g id="basler-top">
+    <rect class="box" x="940" y="300" width="260" height="46" rx="3"/>
+    <text class="t-title" x="952" y="319">Basler top  acA1300-200um</text>
+    <text class="t-port" x="952" y="338">Line4 trigger in</text>
+    <text class="t-port" x="1120" y="338">USB3 → PC</text>
+  </g>
+  <g id="basler-side">
+    <rect class="box" x="940" y="356" width="260" height="66" rx="3"/>
+    <text class="t-title" x="952" y="375">Basler side  acA800-510um</text>
+    <text class="t-port" x="952" y="394">Line4 trigger in</text>
+    <text class="t-port" x="952" y="413">Line3 ExposureActive out (high = exposing)</text>
+  </g>
+  <g id="basler-wires">
+    <path class="w w-dig" d="M770,374 L860,374 L860,334 L940,334" marker-end="url(#arr-dig)"/>
+    <path class="w w-dig" d="M860,374 L860,390 L940,390" marker-end="url(#arr-dig)"/>
+    <circle class="dot-dig" cx="860" cy="374" r="3.5"/>
+    <path class="w w-dig" d="M860,374 L860,401 L770,401" marker-end="url(#arr-dig)"/>
+    <text class="wl" x="866" y="366">ctr0 pulses, both cameras; tee → AI9</text>
+    <path class="w w-ai" d="M940,409 L890,409 L890,428 L770,428" marker-end="url(#arr-ai)"/>
+  </g>
+  <g id="fsync-generator">
+    <rect class="box" x="940" y="436" width="260" height="34" rx="3"/>
+    <text class="t-title" x="952" y="458">Frame-sync generator</text>
+    <text class="t-port" x="1130" y="458">clock out</text>
+    <circle class="dot-ai" cx="900" cy="453" r="3.5"/>
+    <path class="w w-ai" d="M940,453 L900,453 L900,482 L770,482" marker-end="url(#arr-ai)"/>
+    <path class="w w-ai" d="M900,453 L900,540 L940,540" marker-end="url(#arr-ai)"/>
+    <text class="wl" x="778" y="474">tee → AI10</text>
+  </g>
+  <g id="phantom">
+    <rect class="box" x="940" y="484" width="260" height="90" rx="3"/>
+    <text class="t-title" x="952" y="503">Phantom KT810</text>
+    <text class="t-port" x="952" y="522">1  Trigger in</text>
+    <text class="t-port" x="952" y="544">2  TC in  = Frame Sync In</text>
+    <text class="t-port" x="952" y="566">4  FSync P = Recording out</text>
+    <text class="t-port" x="1120" y="522">GigE → PC</text>
+    <path class="w w-ao" d="M770,455 L820,455 L820,518 L940,518" marker-end="url(#arr-ao)"/>
+    <path class="w w-ai" d="M940,562 L800,562 L800,509 L770,509" marker-end="url(#arr-ai)"/>
+  </g>
+
+  <!-- ===== PC and returns ===== -->
+  <g id="pc">
+    <rect class="box" x="470" y="560" width="300" height="46" rx="3"/>
+    <text class="t-title" x="482" y="579">PC · MATLAB R2019a · PCIe-6321 (Dev1)</text>
+    <text class="t-port" x="482" y="597">SHC68-68-EPM cable to the SCB-68A</text>
+    <path class="w w-data" d="M620,528 L620,560"/>
+    <path class="w w-data" d="M300,278 L360,278 L360,640 L470,640"/>
+    <text class="wl" x="366" y="632">USB serial (Panel_com)</text>
+    <path class="w w-data" d="M770,583 L900,583 L900,596 L1000,596"/>
+    <text class="wl" x="906" y="612">USB3 (Basler) · GigE (Phantom)</text>
+  </g>
+  <g id="returns">
+    <rect class="box" x="40" y="440" width="260" height="120" rx="3"/>
+    <text class="t-title" x="52" y="459">Return terminals</text>
+    <text class="t" x="52" y="480">Analog sources → AI GND</text>
+    <text class="pin" x="52" y="496">67 · 32 · 64 · 29 · 27 · 59 · 24 · 56</text>
+    <text class="t" x="52" y="516">AO0 / AO1 → AO GND  <tspan class="pinnum">55 · 54</tspan></text>
+    <text class="t" x="52" y="534">PFI12 → D GND  <tspan class="pinnum">36</tspan></text>
+    <text class="warn" x="52" y="552">Never 8 or 14: they are +5 V</text>
+  </g>
+
+  <!-- ===== Legend ===== -->
+  <g id="legend">
+    <line x1="40" y1="672" x2="66" y2="672" stroke="#1E7F8C" stroke-width="3"/><text class="leg" x="74" y="676">analog input, single-ended</text>
+    <line x1="260" y1="672" x2="286" y2="672" stroke="#B6394A" stroke-width="3"/><text class="leg" x="294" y="676">analog output</text>
+    <line x1="420" y1="672" x2="446" y2="672" stroke="#B7791F" stroke-width="3"/><text class="leg" x="454" y="676">counter output (hardware trigger)</text>
+    <line x1="700" y1="672" x2="726" y2="672" stroke="#7C8A92" stroke-width="2" stroke-dasharray="5 4"/><text class="leg" x="734" y="676">data / control link, not through the DAQ</text>
+    <text class="leg" x="40" y="694">Arrows point the way the signal travels. A dot marks a tee (one source, two destinations). Numbers are SCB-68A screw terminals = PCIe-6321 68-pin numbers.</text>
+  </g>
+</svg>
