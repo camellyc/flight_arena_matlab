@@ -7,8 +7,8 @@ function varargout = run_session_gui()
 %   fig = run_session_gui;   % ... and return its uifigure
 %
 % The window is generated from run_session_unified('defaults'), so it always opens on
-% the values currently in the USER SETTINGS  block, and a setting added there shows up
-% here with no change to this file. One tab per settings section; hover over a field
+% the values currently in session_defaults.m, and a setting added there shows up here
+% with no change to this file. One tab per settings section; hover over a field
 % for the comment written next to it in the file. A setting that differs from the
 % file has a bold orange label; an entry that cannot be read as a value turns red.
 %
@@ -20,7 +20,7 @@ function varargout = run_session_gui()
 %   Reset  re-reads the file, dropping your edits.
 %   Save as file defaults
 %          writes every setting that differs from the file into the USER SETTINGS
-%          block of run_session_unified.m itself (values only: comments, alignment
+%          block of session_defaults.m (values only: comments, alignment
 %          and every other line stay as they are), after a confirmation listing the
 %          changes. From then on those values are the defaults that this window,
 %          Reset and run_session_unified open on. The rewritten file is read back
@@ -91,10 +91,10 @@ statusLabel = uilabel(bottom, 'Text', '', 'Tag', 'statusLabel');
 if canFit && isprop(statusLabel, 'WordWrap'), statusLabel.WordWrap = 'on'; end   % grows the 'fit' row
 statusFg = statusLabel.FontColor;
 uibutton(bottom, 'Text', 'Save as file defaults', 'Tag', 'saveDefaultsButton', ...
-         'Tooltip', 'Write the changed settings into the USER SETTINGS block of run_session_unified.m', ...
+         'Tooltip', 'Write the changed settings into the USER SETTINGS block of session_defaults.m', ...
          'ButtonPushedFcn', @(~, ~) onSaveDefaults());
 uibutton(bottom, 'Text', 'Reset to file defaults', 'Tag', 'resetButton', ...
-         'Tooltip', 'Re-read the USER SETTINGS block of run_session_unified.m', ...
+         'Tooltip', 'Re-read the USER SETTINGS block of session_defaults.m', ...
          'ButtonPushedFcn', @(~, ~) onReset());
 uibutton(bottom, 'Text', 'Run', 'Tag', 'runButton', 'FontWeight', 'bold', ...
          'Tooltip', 'Start run_session_unified with these settings', ...
@@ -317,7 +317,7 @@ if nargout > 0, varargout{1} = fig; end
             setStatus('No setting differs from the file; nothing to save.', false);
             return;
         end
-        file  = which('run_session_unified');
+        file  = which('session_defaults');
         lines = cellfun(@(p, v) sprintf('%s = %s', p, valueText(v)), changed(:, 1), changed(:, 2), ...
                         'UniformOutput', false);
         % The tests set skipConfirm on the figure; a person is always asked first.
@@ -437,10 +437,10 @@ function logChanges(changed)
 % What this session changed from the file. Printed when the session ends, because
 % run_session_unified clears the command window as it starts.
 if isempty(changed)
-    fprintf('\nrun_session_gui: this session used the settings in run_session_unified.m unchanged.\n');
+    fprintf('\nrun_session_gui: this session used the settings in session_defaults.m unchanged.\n');
     return;
 end
-fprintf('\nrun_session_gui: this session changed %d setting(s) from run_session_unified.m:\n', size(changed, 1));
+fprintf('\nrun_session_gui: this session changed %d setting(s) from session_defaults.m:\n', size(changed, 1));
 for k = 1:size(changed, 1)
     fprintf('  %s = %s\n', changed{k, 1}, valueText(changed{k, 2}));
 end
@@ -485,7 +485,7 @@ if ~isempty(missing)
           strjoin(missing, ', '), file);
 end
 writeText(file, strjoin(src, nl));
-clear('run_session_unified');                     % make sure the next call parses the new file
+clear('session_defaults');                     % make sure the next call parses the new file
 try
     S = run_session_unified('defaults');
     for k = 1:size(changed, 1)
@@ -496,7 +496,7 @@ try
     end
 catch ME
     writeText(file, old);
-    clear('run_session_unified');
+    clear('session_defaults');
     error('run_session_gui:writeFailed', ...
           'The rewritten file did not read back correctly (%s). The original file was restored.', ME.message);
 end
@@ -637,14 +637,14 @@ switch kind
     case 'cellstr'
         t = strjoin(v, ', ');
     otherwise
-        t = sprintf('(%s %s: edit in run_session_unified.m)', mat2str(size(v)), class(v));
+        t = sprintf('(%s %s: edit in session_defaults.m)', mat2str(size(v)), class(v));
 end
 end
 
 function tips = settingComments()
 % End-of-line comment of every assignment in the USER SETTINGS block, by setting path.
 tips = containers.Map('KeyType', 'char', 'ValueType', 'char');
-src = splitlines(fileread(which('run_session_unified')));
+src = splitlines(fileread(which('session_defaults')));
 inBlock = false;
 for k = 1:numel(src)
     ln = src{k};

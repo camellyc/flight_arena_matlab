@@ -1,8 +1,9 @@
 function tests = test_run_session_gui
-%TEST_RUN_SESSION_GUI Tests for run_session_gui and the run_session_unified('defaults')
-% query it is built on. The GUI tests drive the real window headlessly; every run is
-% hw.simulate into a scratch folder, so no hardware is touched. Expected values come
-% from the USER SETTINGS themselves, so editing a default does not break a test.
+%TEST_RUN_SESSION_GUI Tests for run_session_gui. They drive the real window
+% headlessly; every run is hw.simulate into a scratch folder, so no hardware is
+% touched. Expected values come from session_defaults.m itself, so editing a default
+% does not break a test. The run_session_unified('defaults') query the window is built
+% on is tested in test_run_session_unified.
 tests = functiontests(localfunctions);
 end
 
@@ -16,33 +17,10 @@ function teardown(~)
 closeGui();
 end
 
-%% ---- run_session_unified('defaults') -----------------------------------
-
-function testDefaultsQueryReturnsTheUserSettings(testCase)
-% Exactly the USER SETTINGS block. The values run_session_unified derives afterwards
-% (duty cycle, trigger time, ...) are not valid overrides, so a GUI built from them
-% would send fields the run rejects.
-S = run_session_unified('defaults');
-verifyClass(testCase, S.saveFolder, 'char');
-verifyTrue(testCase, isfield(S.meta, 'flyNumber') && isfield(S.opto, 'mode') && isfield(S.basler.top, 'serial'), ...
-    'The settings sections must come back as nested structs.');
-verifyFalse(testCase, isfield(S.opto, 'duty_cycle'), 'Derived opto settings must not be returned.');
-verifyFalse(testCase, isfield(S.phantom, 'trigger_time_s'), 'Derived Phantom settings must not be returned.');
-end
-
-function testDefaultsQueryLeavesOpenFiguresAlone(testCase)
-% The query must stop after USER SETTINGS -- before the close all / clc a real
-% session starts with, which would take the caller's figures (and the GUI) with it.
-f = figure('Visible', 'off');
-testCase.addTeardown(@() delete(f(isvalid(f))));
-run_session_unified('defaults');
-verifyTrue(testCase, isvalid(f), 'A defaults query must not close open figures.');
-end
-
 %% ---- window: built from the file ---------------------------------------
 
 function testEverySettingHasOneControl(testCase)
-% The window is generated from the settings struct: every setting in USER SETTINGS
+% The window is generated from the settings struct: every setting in session_defaults.m
 % must be editable, none dropped or doubled, with no GUI edit when one is added.
 fig = run_session_gui();
 paths = leafPaths(run_session_unified('defaults'));
@@ -88,7 +66,7 @@ end
 end
 
 function testTooltipIsTheSettingsLineComment(testCase)
-% Hovering a field shows the comment written next to it in USER SETTINGS.
+% Hovering a field shows the comment written next to it in session_defaults.m.
 fig = run_session_gui();
 c = ctrl(fig, 'hw.simulate');
 tip = char(c.Tooltip);
@@ -323,8 +301,8 @@ verifyEqual(testCase, char(b.Enable), 'on', 'Run must be available again after a
 end
 
 %% ---- Save as file defaults ---------------------------------------------
-% These tests rewrite a private copy of run_session_unified.m placed ahead of the
-% real one on the path, so the real file is never touched.
+% These tests rewrite a private copy of session_defaults.m placed ahead of the real
+% one on the path, so the real file is never touched.
 
 function testSaveDefaultsWritesTheValuesIntoTheFile(testCase)
 % Every kind of control, plus a setting inside a struct(...) call (basler.side.gain):
@@ -358,7 +336,7 @@ verifyEqual(testCase, val(fig, 'meta.flyNumber'), want{1, 2}, 'Reset must return
 verifySubstring(testCase, fileread(file), ['acq.TrialLength     = ' mat2str(want{4, 2}) ';'], ...
     'The value must be written in place, keeping the alignment of the = sign.');
 verifyEqual(testCase, fileread(testCase.TestData.realFile), testCase.TestData.realText, ...
-    'The real run_session_unified.m must not be touched.');
+    'The real session_defaults.m must not be touched.');
 end
 
 function testSaveDefaultsKeepsTheRestOfTheFile(testCase)
@@ -413,12 +391,12 @@ end
 %% ---- helpers -------------------------------------------------------------
 
 function file = tempSettingsFile(testCase)
-% A private copy of run_session_unified.m that shadows the real one, so that saving
+% A private copy of session_defaults.m that shadows the real one, so that saving
 % defaults rewrites the copy. MATLAB resolves the current folder before the path, so
-% the copy is made the current folder (the real code folder stays reachable on the
-% path). The real file's path and text are kept in TestData so a test can check it
-% was left alone.
-realFile = which('run_session_unified');
+% the copy is made the current folder (the real code folder, which also holds
+% run_session_unified.m, stays reachable on the path). The real file's path and text
+% are kept in TestData so a test can check it was left alone.
+realFile = which('session_defaults');
 realDir  = fileparts(realFile);
 testCase.TestData.realFile = realFile;
 testCase.TestData.realText = fileread(realFile);
@@ -426,19 +404,19 @@ onPath = contains([pathsep path pathsep], [pathsep realDir pathsep]);
 if ~onPath, addpath(realDir); end
 d = tempname;
 mkdir(d);
-file = fullfile(d, 'run_session_unified.m');
+file = fullfile(d, 'session_defaults.m');
 copyfile(realFile, file);
 fileattrib(file, '+w');
 oldDir = cd(d);
-clear('run_session_unified');
+clear('session_defaults');
 testCase.addTeardown(@() removeTempSettingsFile(d, oldDir, realDir, ~onPath));
-assert(strcmp(which('run_session_unified'), file), 'The temporary copy does not shadow the real file.');
+assert(strcmp(which('session_defaults'), file), 'The temporary copy does not shadow the real file.');
 end
 
 function removeTempSettingsFile(d, oldDir, realDir, dropPath)
 cd(oldDir);
 if dropPath, rmpath(realDir); end
-clear('run_session_unified');
+clear('session_defaults');
 rmdir(d, 's');
 end
 
@@ -556,8 +534,8 @@ end
 end
 
 function line = settingsLine(path)
-% The line of run_session_unified.m that assigns this setting.
-src = splitlines(fileread(which('run_session_unified')));
+% The line of session_defaults.m that assigns this setting.
+src = splitlines(fileread(which('session_defaults')));
 hit = src(~cellfun(@isempty, regexp(src, ['^\s*' regexptranslate('escape', path) '\s*='], 'once')));
 assert(isscalar(hit), 'Expected one line assigning %s, found %d.', path, numel(hit));
 line = hit{1};
