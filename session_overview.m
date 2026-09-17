@@ -1,5 +1,5 @@
-function h = analysis(matFile, channels, opts)
-% ANALYSIS  Interactive viewer for the AI channels of a flight-arena session .mat.
+function h = session_overview(matFile, channels, opts)
+% SESSION_OVERVIEW  Interactive viewer for the AI channels of a flight-arena session .mat.
 %
 % Plots the requested channels of Data (from run_session_unified.m, or a legacy
 % run_session_*.m file) as stacked panels with a shared, linked time axis: zoom
@@ -7,11 +7,11 @@ function h = analysis(matFile, channels, opts)
 % follow. Opto stimuli, the Phantom window and block boundaries are overlaid.
 %
 % USAGE
-%   analysis                          % file picker; channels from USER SETTINGS below
-%   analysis(matFile)                 % channels from USER SETTINGS
-%   analysis(matFile, channels)
-%   analysis(matFile, channels, opts)
-%   h = analysis(...)                 % figure / axes / line handles
+%   session_overview                          % file picker; channels from USER SETTINGS below
+%   session_overview(matFile)                 % channels from USER SETTINGS
+%   session_overview(matFile, channels)
+%   session_overview(matFile, channels, opts)
+%   h = session_overview(...)                 % figure / axes / line handles
 %
 % CHANNELS  (case-insensitive; see params.data_rows in the file for the names)
 %   'all'                                     every AI channel, one panel each
@@ -41,9 +41,9 @@ function h = analysis(matFile, channels, opts)
 %   y_vel_window_s  slope window for the velocity (default 0.5 s)
 %
 % EXAMPLES
-%   analysis('...\2026_0914_120000_test_Fly1_Trial1.mat', {'WBF', 'EMG'})
-%   analysis(f, 'all', struct('decimate', 10))
-%   analysis(f, {{'WBA_left', 'WBA_right'}, 'LED_driver'}, struct('xlim', [20 40]))
+%   session_overview('...\2026_0914_120000_test_Fly1_Trial1.mat', {'WBF', 'EMG'})
+%   session_overview(f, 'all', struct('decimate', 10))
+%   session_overview(f, {{'WBA_left', 'WBA_right'}, 'LED_driver'}, struct('xlim', [20 40]))
 %
 % Author: Yichen Luo, 2026-09
 
@@ -206,7 +206,7 @@ if ~opts.dark, lineColors(7, :) = [0.3 0.3 0.3]; end
 stimColors = [1 0.196 0.353; 1 0.6 0.2];       % randomized = crimson, window = orange
 phColor = [0.3 0.5 1];
 
-h.fig = figure('Name', ['analysis: ' fileTitle], 'NumberTitle', 'off', 'Color', bg, ...
+h.fig = figure('Name', ['session_overview: ' fileTitle], 'NumberTitle', 'off', 'Color', bg, ...
                'Position', opts.fig_position, 'InvertHardcopy', 'off');
 h.ax = gobjects(1, nP);
 h.lines = cell(1, nP);

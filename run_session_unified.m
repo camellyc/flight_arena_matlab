@@ -12,7 +12,12 @@ function out = run_session_unified(overrides)
 %   run_session_unified(ov)             % ov = struct of overrides, e.g.
 %                                       %   ov.opto.mode = 'randomized';
 %                                       %   ov.basler.side.enable = false;
+%                                       % Every override field must already exist in
+%                                       % USER SETTINGS: an unknown or misspelled one
+%                                       % is an error, not a silently ignored default.
 %   out = run_session_unified(...)      % returns Data, params and results (in ans if not captured)
+%   S = run_session_unified('defaults') % the USER SETTINGS as one struct; runs nothing
+%   run_session_gui                     % window for editing the USER SETTINGS, then Run
 %
 % MODES (all selected in the USER SETTINGS block)
 %   visual.mode : 'closed_loop_stripe'      pattern + closed-loop X gain
@@ -52,27 +57,34 @@ function out = run_session_unified(overrides)
 %   <base>.mat             Data (14 x N), variables, allRandomizedStimOrders,
 %                          stimTable, params, phantom, baslerInfo
 %   <base>_plot.svg/.png   summary figure
-%   <base>_TopCamera.mp4, <base>_SideCamera.mp4
+%   <base>_TopCamera.mp4, <base>_SideCamera.mp4   (H.264). During the run the frames
+%                          stream uncompressed (basler.video_profile) to
+%                          basler.video_scratch_folder on a local NVMe; after the .mat is
+%                          saved, ffmpeg compresses each file (basler.h264), applying the
+%                          rotate_deg that could not be done on-camera, and the mp4 is
+%                          moved here. Check baslerInfo.<cam>.rotate_deg_pending: 0 means
+%                          the video is already oriented as configured.
 %   Phantom sequence: <phantom.saveRoot>\<experiment_name>\<base>_PhantomCamera
 %
 % Author: Yichen Luo, 2026-09 (unified version)
+% edits: Kyle Thieringer, 2026-09
 
 if nargin < 1 || isempty(overrides), overrides = struct(); end
-close all; clc
+defaultsOnly = (ischar(overrides) || isstring(overrides)) && strcmpi(overrides, 'defaults');
+if ~defaultsOnly, close all; clc; end
 
 %% ======================= USER SETTINGS ==================================
-saveFolder = ['H:\.shortcut-targets-by-id\10pxdlRXtzFB-abwDGi0jOGOFFNm3pmFK\Tuthill Lab Shared\Yichen\', ...
-              'Spiracle\Flight_Arena_Data\260914_test\'];
+saveFolder = 'K:\sanjana\dat\Raw\R71F05';
 
 % --- Fly / experiment metadata (non-empty fields build the file name, in this order) ---
-meta.experiment_name   = 'test';           % e.g. SpINB_ChR
-meta.genotype          = '';      % e.g. IS46338_ChR_4d_F
-meta.flyNumber         = '1';
-meta.trialNum          = '1';
-meta.stimulus_regime   = '0ms';                   % e.g. 0-3000ms, 3000msx3, 10000ms
+meta.experiment_name   = 'R71F05_ChR';     % e.g. SpINB_ChR
+meta.genotype          = 'R71F05';  % e.g. IS46338_ChR_4d_F
+meta.flyNumber         = 'ba04';
+meta.trialNum          = '4';
+meta.stimulus_regime   = '2/5ms';                 % e.g. 0-3000ms, 3000msx3, 10000ms
 meta.stimulus_position = 'thorax';
-meta.phantom_position  = 'sp1';                   % sp1, sp2, wing, ''
-meta.visual_stim_type  = 'oscillating_sine_wave_20';
+meta.phantom_position  = '';                      % sp1, sp2, wing, ''
+meta.visual_stim_type  = 'closed loop stripe';
 meta.carbon_dioxide    = 'OFF';
 meta.auto_trial_number = false;   % true: trialNum = 1 + #existing .mat files for this fly in saveFolder
 meta.notes             = '';
@@ -86,7 +98,7 @@ hw.play_sound_at_end = true;
 
 % --- Acquisition ---
 acq.SampleRate      = 10000;   % Hz
-acq.TrialLength     = 90;     % s per block
+acq.TrialLength     = 30;     % s per block
 acq.blocks          = 1;
 acq.ai_channels     = [0:11 14];
 acq.ai_names        = {'LED_driver','WBF','WBA_left','WBA_right','hutchen_left','hutchen_right', ...
@@ -100,8 +112,8 @@ acq.notify_period_s = 0.1;     % DataAvailable callback period (plot update rate
 %   13 = horizontal stripes + smooth vertical bar, 2 = horizontal stripes.
 % Velocity functions: 4 = sine 0.025 Hz, 5 = sine 0.05 Hz, 6 = sine 0.2 Hz,
 %   8 = sine 1 Hz, 9-14 = square waves (amp1/2/3 at 0.05 / 0.1 Hz).
-visual.mode        = 'closed_loop_oscillating'; % 'closed_loop_stripe' | 'closed_loop_oscillating' | 'none'
-visual.pattern_id  = 2;
+visual.mode        = 'closed_loop_stripe';      % 'closed_loop_stripe' | 'closed_loop_oscillating' | 'none'
+visual.pattern_id  = 14;
 visual.CL_X_gain   = -5;
 visual.x_pos       = 48;        % start X position (used in stripe mode)
 visual.mode_xy     = [1 0];     % Panel_com set_mode: X closed loop, Y open loop
@@ -110,7 +122,7 @@ visual.funcy_freq  = 50;        % oscillating mode: Y function update rate (Hz)
 visual.y_gain      = 20;        % oscillating mode: pixels/s
 visual.y_bias      = 0;
 visual.cl_during_setup = true;  % closed-loop stripe while cameras/Phantom initialise (fly fixates)
-visual.rest.pattern_id = 13;    % arena state before setup and after the experiment
+visual.rest.pattern_id = 14;    % arena state before setup and after the experiment
 visual.rest.x_pos      = 48;
 visual.rest.CL_X_gain  = -5;
 
@@ -119,16 +131,13 @@ opto.mode              = 'both';     % 'randomized' | 'windows' | 'both' | 'none
 opto.ao                = 'ao0';
 opto.Frequency         = 200;           % pulse rate (Hz)
 opto.PulseDuration     = 3;             % pulse width (ms); >= 1000/Frequency gives continuous light
-opto.amplitude_V       = 10;            % default LED command voltage
+opto.amplitude_V       = 5;             % default LED command voltage
 % randomized mode: durations (ms), evenly spaced at TrialLength/(n+1); 0 = sham
-opto.stimDurations     = [0 1000 1000];
-%opto.stimDurations     = [0 3000 3000];
-%opto.stimDurations     = [0 100 300 1000 3000];
-%opto.stimDurations     = [10000];
+opto.stimDurations     = [0 2000 5000];
 opto.stimIntensities_V = [];            % [] = amplitude_V for all; else one voltage per duration (paired)
 opto.randomize         = true;          % shuffle order every block
 % windows mode: explicit [onset offset] rows in seconds within the block
-opto.windows_s         = [88, 88.5];
+opto.windows_s         = [28 28.5];
 opto.windows_amplitude_V = [];          % [] = amplitude_V; else one voltage per row
 
 % --- Basler cameras (hardware-triggered by ctr0) ---
@@ -137,10 +146,39 @@ basler.Exposure_time           = 9000;  % us; clamped to 90 % of the frame perio
 basler.trigger_ctr             = 'ctr0';
 basler.trigger_initial_delay_s = 0.05;
 basler.format                  = 'Mono8';
-basler.video_profile           = 'MPEG-4';
-basler.video_quality           = 100;
+% Frames stream to disk during acquisition (LoggingMode = 'disk' + DiskLogger), so
+% nothing is buffered in RAM. The stream is UNCOMPRESSED: the disk logger hands every
+% frame to a MATLAB VideoWriter on the MATLAB thread, and MATLAB's Motion JPEG encoder
+% measured only 109 fps (top, 640x512) / 75 fps (side, 800x600) on this PC against the
+% 400 fps two cameras deliver -- the interpreter saturated, the live plot and DAQ
+% callbacks stalled and frames were dropped (2026-09-15). Grayscale AVI measured
+% 765 / 636 fps and ~160 MB/s total, well inside the NVMe. Compression happens after
+% the run with ffmpeg (basler.h264 below).
+basler.video_profile           = 'Grayscale AVI';   % 'Grayscale AVI' (uncompressed) | 'Motion JPEG AVI' | 'MPEG-4'
+basler.video_quality           = 90;    % only used by profiles with a Quality property (Motion JPEG AVI, MPEG-4)
 basler.discover_timeout_s      = 5;     % wait up to this long for the cameras to enumerate after imaqreset
-% rotate_deg: clockwise rotation applied to the saved video (0, 90, 180 or 270)
+basler.disk_flush_timeout_s    = 30;    % wait up to this long for the disk logger to drain after stop
+% The videos stream to this LOCAL folder during the run and are moved into saveFolder
+% after the .mat is saved. saveFolder lives on Google Drive File Stream (H:), and
+% pushing two Motion JPEG streams through it from the acquisition thread stalled the
+% live plot and the whole session (2026-09-15). Keep this on a local NVMe drive;
+% '' writes straight into saveFolder.
+basler.video_scratch_folder    = 'K:\FlightArena_scratch\';
+% After the .mat is saved, each raw AVI in the scratch folder is compressed to H.264
+% mp4 with ffmpeg on all cores (~15 s per 18000 frames of 800x600 here), the pending
+% rotation is applied in the same pass, the raw file is deleted and the mp4 is moved
+% into saveFolder. If ffmpeg fails the raw AVI stays in the scratch folder and
+% baslerInfo.<cam>.file points at it.
+basler.h264.enable       = true;
+basler.h264.ffmpeg       = 'C:\Users\Lylah\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-7.1.1-full_build\bin\ffmpeg.exe';   % '' = the ffmpeg on PATH
+basler.h264.crf          = 18;          % libx264 quality: 0 lossless, 18 visually lossless, 23 ffmpeg default
+basler.h264.preset       = 'veryfast';  % slower presets give smaller files for a longer encode
+basler.h264.pixel_format = 'yuv420p';   % plays everywhere; 'gray' is a little smaller but not every reader opens it
+basler.h264.keep_raw     = false;       % true: also leave the uncompressed AVI in video_scratch_folder
+% rotate_deg: clockwise rotation the video should end up with (0, 90, 180 or 270).
+% Disk logging writes frames straight from the camera, so only 180 deg can be baked in
+% on-camera (ReverseX + ReverseY). 90/270 are applied by the ffmpeg pass above; with
+% h264.enable = false they stay in baslerInfo.<cam>.rotate_deg_pending for analysis.
 basler.top  = struct('enable', true,  'label', 'TopCamera',  'serial', '22703705', ...
                      'gain', 5,  'gamma', 0.5, 'binning', 2, ...
                      'rotate_deg', 90,  'exposure_active_out', false, 'line_inverter', 'False');
@@ -149,12 +187,12 @@ basler.side = struct('enable', true,  'label', 'SideCamera', 'serial', '22843477
                      'rotate_deg', 180, 'exposure_active_out', true,  'line_inverter', 'False');
 
 % --- Phantom KT810 ---
-phantom.enable        = true;
+phantom.enable        = false;
 phantom.mode          = 'framesync';  % 'framesync' | 'fixed_fps' - need to also set Phantom PCC to "external"
 phantom.serial        = 34437;
 phantom.fps           = 100;         % framesync: metadata only (external clock); fixed_fps: set on camera
 phantom.exposure_us   = 150;
-phantom.window_s      = [5 85];      % [capture start, trigger] for framesync / fixed 'end'; [trigger, end] for fixed 'start'
+phantom.window_s      = [5 15];      % [capture start, trigger] for framesync / fixed 'end'; [trigger, end] for fixed 'start'
 phantom.trigger_at    = 'end';        % fixed_fps only: 'end' (pre-trigger buffer) | 'start' (post-trigger frames)
 phantom.pt_frames     = 10;           % fixed_fps + 'end': small post-trigger buffer
 phantom.arm_lead_s    = 0.5;          % start capture / arm this long before window_s(1)
@@ -180,16 +218,23 @@ plotting.ch = struct('led', 1, 'wbf', 2, 'wbaL', 3, 'wbaR', 4, 'hutchen_left', 5
                      'basler_shutter', 12, 'phantom_rec', 13);
 plotting.wba_gain    = 20;     % delta WBA (V) is multiplied by this to share the delta WBF (Hz) axis
 plotting.trigger_threshold_V = 2.5;   % Basler trigger loop-back above this = camera recording
-plotting.bin_samples = 100;    % summary traces = block means of this many samples (100 -> 200 Hz)
+plotting.bin_samples = 100;    % summary traces = block means of this many samples 
 plotting.baseline_s  = 5;      % baseline window for delta WBF / WBA (first seconds of the experiment)
 plotting.ylim        = [-100 50];
 plotting.save_svg    = true;
 plotting.save_png    = true;
+% When the run is over, open session_overview on the saved .mat: every channel in its
+% own panel, linked zoom/pan in time, opto and Phantom windows overlaid. Nothing is
+% saved; it is for checking the trial. Dense pulse trains (Basler trigger, F-Sync)
+% look like a solid band until you zoom in.
+plotting.session_overview = true;
+plotting.overview_channels = 'all';   % 'all', or a list like {'WBF', {'WBA_left', 'WBA_right'}, 'basler_trigger'}
 %% ===================== END USER SETTINGS ================================
 
 %% ---------------- apply overrides, derive settings, validate -------------
 S = struct('saveFolder', saveFolder, 'meta', meta, 'hw', hw, 'acq', acq, 'visual', visual, ...
            'opto', opto, 'basler', basler, 'phantom', phantom, 'plotting', plotting);
+if defaultsOnly, out = S; return; end   % the settings above, exactly as overrides take them; nothing run
 S = mergeStruct(S, overrides);
 saveFolder = S.saveFolder; meta = S.meta; hw = S.hw; acq = S.acq; visual = S.visual;
 opto = S.opto; basler = S.basler; phantom = S.phantom; plotting = S.plotting;
@@ -209,6 +254,14 @@ N_block = round(acq.TrialLength * fs);
 N_total = N_block * acq.blocks;
 nAI     = numel(acq.ai_channels);
 assert(numel(acq.ai_names) == nAI, 'acq.ai_names must have one entry per AI channel.');
+% Data row 1 holds block-relative time in single precision. Single's spacing grows
+% with magnitude, so a long enough block would make consecutive timestamps collide.
+assert(eps(single(acq.TrialLength)) < 1 / fs, ...
+    ['acq.TrialLength = %g s at %g Hz cannot be time-stamped in single precision: ' ...
+     'the spacing at %g s is %g s, coarser than the %g s sample period. Shorten ' ...
+     'TrialLength (max ~%.0f s at this rate) or store Data as double.'], ...
+    acq.TrialLength, fs, acq.TrialLength, eps(single(acq.TrialLength)), 1 / fs, ...
+    double(acq.TrialLength) * (1 / fs) / double(eps(single(acq.TrialLength))));
 chVals = cellfun(@(f) plotting.ch.(f), fieldnames(plotting.ch));
 assert(all(chVals >= 1 & chVals <= nAI), 'plotting.ch entries must index into acq.ai_channels (1..%d).', nAI);
 
@@ -224,15 +277,42 @@ end
 % Opto pulse geometry
 opto.mode = lower(opto.mode);
 assert(any(strcmp(opto.mode, {'randomized', 'windows', 'both', 'none'})), 'opto.mode must be randomized | windows | both | none');
-opto.period_samples = max(1, round(fs / opto.Frequency));
-opto.on_samples     = round(fs * opto.PulseDuration / 1000);
-if opto.on_samples >= opto.period_samples
-    opto.on_samples = opto.period_samples;
-    if ~strcmp(opto.mode, 'none')
-        warning('PulseDuration >= 1/Frequency: LED will be continuous during stimuli.');
+% Carrier geometry. duty_cycle is exact rather than quantised to whole samples:
+% the shared pulseTrain kernel uses a modular phase, so the realised pulse rate
+% matches opto.Frequency even when the period is not a whole number of samples.
+% period_samples / on_samples are kept for the saved metadata only and may now be
+% fractional -- nothing builds the waveform from them any more.
+opto.duty_cycle     = min(1, opto.PulseDuration / 1000 * opto.Frequency);
+opto.period_samples = fs / opto.Frequency;
+opto.on_samples     = opto.duty_cycle * opto.period_samples;
+if opto.PulseDuration / 1000 * opto.Frequency >= 1 && ~strcmp(opto.mode, 'none')
+    warning('PulseDuration >= 1/Frequency: LED will be continuous during stimuli.');
+end
+if ~strcmp(opto.mode, 'none')
+    % Build one sample purely to run the kernel's checks here, at setup, rather
+    % than discovering an impossible carrier once the fly is already on the rig.
+    % Catches a sub-sample PulseDuration (which used to yield a silently all-zero
+    % LED command) and a Frequency above Nyquist.
+    pulseTrain(1, opto.amplitude_V, fs, opto.Frequency, opto.duty_cycle);
+end
+% Randomized stimuli are laid down at TrialLength/(n+1), so a duration longer than
+% that spacing gets its tail overwritten by the next stimulus -- silently, while
+% stimTable still claims the full duration. Note that "fits between its neighbours"
+% and "fits inside the block" are the same condition: the last onset is spacing*n
+% and the block ends at spacing*(n+1), so both reduce to duration <= spacing.
+if any(strcmp(opto.mode, {'randomized', 'both'})) && ~isempty(opto.stimDurations)
+    nStims  = numel(opto.stimDurations);
+    spacing = acq.TrialLength / (nStims + 1);
+    longest = max(opto.stimDurations) / 1000;
+    if longest > spacing
+        error('run_session_unified:optoOverlap', ...
+              ['%d stimuli in a %g s block are spaced %g s apart, but the longest entry in ' ...
+               'opto.stimDurations is %g s -- they would overwrite each other and the last ' ...
+               'would run past the end of the block. Lengthen acq.TrialLength to >= %g s, ' ...
+               'shorten the stimulus, or use fewer.'], ...
+              nStims, acq.TrialLength, spacing, longest, longest * (nStims + 1));
     end
 end
-opto.duty_cycle = opto.on_samples / opto.period_samples;
 if any(strcmp(opto.mode, {'windows', 'both'})) && ~isempty(opto.windows_s)
     W = opto.windows_s;
     assert(size(W, 2) == 2 && all(W(:, 1) >= 0) && all(W(:, 2) <= acq.TrialLength) && all(W(:, 2) > W(:, 1)), ...
@@ -259,16 +339,38 @@ if phantom.enable && ~isempty(phantom.gate_ai)
     assert(~isempty(phantom.gate_col), 'phantom.gate_ai "%s" is not in acq.ai_names.', phantom.gate_ai);
 end
 
-% File names
+% File names. The trial glob and the file name must come from the same drop-empties
+% logic: interpolating metadata straight into a glob put a double underscore in it
+% whenever a field was empty ('*_test__Fly1_Trial*'), so it never matched a real
+% file and every run came out as Trial1. Appending a literal 'Trial*' token to the
+% parts list makes that impossible -- it degrades to '*_Trial*.mat' at worst.
 if ~exist(saveFolder, 'dir'), mkdir(saveFolder); end
+trialGlobParts = {meta.experiment_name, meta.genotype, prefixIfNonEmpty('Fly', meta.flyNumber), 'Trial*'};
+trialGlobParts = trialGlobParts(~cellfun(@isempty, trialGlobParts));
+trialGlob  = ['*_' strjoin(trialGlobParts, '_') '.mat'];
+existing   = dir(fullfile(saveFolder, trialGlob));
+usedTrials = [];
+for iFile = 1:numel(existing)
+    tok = regexp(existing(iFile).name, '_Trial(\d+)(?:_|\.)', 'tokens', 'once');
+    if ~isempty(tok), usedTrials(end + 1) = str2double(tok{1}); end %#ok<AGROW>
+end
 if meta.auto_trial_number
-    pat = fullfile(saveFolder, sprintf('*_%s_%s_Fly%s_Trial*.mat', meta.experiment_name, meta.genotype, meta.flyNumber));
-    meta.trialNum = num2str(numel(dir(pat)) + 1);
-    fprintf('Auto trial number: %s\n', meta.trialNum);
+    % max + 1, not count + 1: a deleted or renamed trial must not make the next run
+    % reuse a number that is still on disk.
+    if isempty(usedTrials), meta.trialNum = '1';
+    else,                   meta.trialNum = num2str(max(usedTrials) + 1);
+    end
+    fprintf('Auto trial number: %s (%d file(s) matched %s)\n', meta.trialNum, numel(existing), trialGlob);
+elseif ismember(str2double(asText(meta.trialNum)), usedTrials)
+    warning('run_session_unified:trialReused', ...
+            ['Trial %s already exists for this fly in %s (%d file(s) matched %s). The new file is ' ...
+             'time-stamped so nothing is overwritten, but two files will claim the same trial number.'], ...
+            asText(meta.trialNum), saveFolder, numel(existing), trialGlob);
 end
 parts = {meta.experiment_name, meta.genotype, prefixIfNonEmpty('Fly', meta.flyNumber), ...
          prefixIfNonEmpty('Trial', meta.trialNum), meta.stimulus_regime, meta.stimulus_position, ...
          meta.phantom_position, meta.visual_stim_type, meta.carbon_dioxide};
+parts = cellfun(@asText, parts, 'UniformOutput', false);   % overrides may pass numbers
 parts = parts(~cellfun(@isempty, parts));
 FlyType      = strjoin(parts, '_');
 savedate     = datestr(scriptStart, 'yyyy_mmdd_HHMMSS');
@@ -276,10 +378,37 @@ baseFileName = [savedate '_' FlyType];
 
 files = struct();
 files.mat        = fullfile(saveFolder, [baseFileName '.mat']);
+% Backstop against clobbering earlier data. baseFileName starts with a
+% second-resolution timestamp, so this only fires if two runs start within the same
+% second -- the duplicate-trial-number case is caught by the warning above instead.
+if exist(files.mat, 'file')
+    error('run_session_unified:fileExists', ...
+          '%s already exists; refusing to overwrite it.', files.mat);
+end
 files.plot_svg   = fullfile(saveFolder, [baseFileName '_plot.svg']);
 files.plot_png   = fullfile(saveFolder, [baseFileName '_plot.png']);
-files.top_video  = fullfile(saveFolder, [baseFileName '_' basler.top.label '.mp4']);
-files.side_video = fullfile(saveFolder, [baseFileName '_' basler.side.label '.mp4']);
+switch lower(basler.video_profile)                      % container matched to the codec
+    case 'mpeg-4',                              vidExt = '.mp4';
+    case {'motion jpeg avi', 'grayscale avi', 'uncompressed avi'}, vidExt = '.avi';
+    case {'archival', 'motion jpeg 2000'},      vidExt = '.mj2';
+    otherwise,                                  vidExt = '.avi';
+end
+basler.video_ext = vidExt;
+if basler.h264.enable, finalExt = '.mp4'; else, finalExt = vidExt; end
+files.top_video  = fullfile(saveFolder, [baseFileName '_' basler.top.label finalExt]);   % final location
+files.side_video = fullfile(saveFolder, [baseFileName '_' basler.side.label finalExt]);
+% Where the DiskLogger actually writes during the run (see basler.video_scratch_folder),
+% and where the ffmpeg pass puts its mp4 before the move.
+if isempty(basler.video_scratch_folder), scratchDir = saveFolder; else, scratchDir = basler.video_scratch_folder; end
+if anyCam && ~exist(scratchDir, 'dir'), mkdir(scratchDir); end
+files.top_video_scratch  = fullfile(scratchDir, [baseFileName '_' basler.top.label vidExt]);
+files.side_video_scratch = fullfile(scratchDir, [baseFileName '_' basler.side.label vidExt]);
+files.top_video_h264     = fullfile(scratchDir, [baseFileName '_' basler.top.label '.mp4']);
+files.side_video_h264    = fullfile(scratchDir, [baseFileName '_' basler.side.label '.mp4']);
+if anyCam && basler.h264.enable
+    % Fail here, before any hardware is touched, rather than after a whole session.
+    compress_video_h264_check(basler.h264.ffmpeg);
+end
 if strcmpi(phantom.save_format, 'cine')
     files.phantom = fullfile(phantom.saveFolder, [baseFileName '_PhantomCamera.cine']);
 else
@@ -299,13 +428,20 @@ fprintf('Phantom    : enable %d, %s, window [%g %g] s, trigger at %g s on %s, Re
         phantom.mode, phantom.window_s(1), phantom.window_s(2), phantom.trigger_time_s, phantom.trigAO, gateDesc);
 
 %% ---------------- shared state (used by nested functions) ---------------
-Data        = zeros(nAI + 1, N_total + 4 * round(fs * acq.notify_period_s));   % [t; AI...]
+% Stored as single: a 16-bit ADC has ~5 significant digits, far inside single's ~7,
+% so nothing is lost, and it halves both the in-memory array and the saved file
+% (192 -> 96 MB for a 90 s block). Row 1 carries block-relative time, whose spacing
+% must stay resolvable in single -- see the assert below.
+Data        = zeros(nAI + 1, N_total + 4 * round(fs * acq.notify_period_s), 'single');   % [t; AI...]
 wp          = 0;              % write pointer into Data
 samplesThisBlock = 0;
 currentBlock = 1;
 deviceID    = '';
 
 % plot state
+plotLive = false;        % runtime flag: the live figure exists and is usable.
+                         % plotting.enable stays the user's setting and is what gets
+                         % saved in params; losing the figure only clears plotLive.
 hFig = []; hRawAx = []; hEmgAx = []; hXAx = []; hLedAx = []; hSumAx = [];
 hRawLines = []; hEmgLine = []; hXLine = []; hYLine = [];
 hLED = []; hWBA = []; hWBF = []; hBasler = []; hPhRec = [];
@@ -346,7 +482,15 @@ phantom.save_time_s    = nan(acq.blocks, 1);
 phantom.init_ok = false;
 baslerInfo = struct();
 
-cleanupObj = onCleanup(@() cleanupAll());   % runs on normal exit, error, or Ctrl+C
+% Everything the teardown needs is registered in teardownState (a handle) as it is
+% created, and teardownAll is a local, not nested, function that reads only that.
+% MATLAB clears this function's variables -- the ones nested functions share --
+% before an onCleanup task runs at exit (normal, error and Ctrl+C alike), so a nested
+% teardown found hw, mainSession, vids, ... already destroyed and stopped before it
+% had zeroed the analog outputs or released anything.
+teardownState = containers.Map();
+teardownState('simulate') = hw.simulate;
+cleanupObj = onCleanup(@() teardownAll(teardownState));   % runs on normal exit, error, or Ctrl+C
 
 %% ---------------- arena: closed loop while everything loads ------------
 if visual.cl_during_setup, arenaRest(); end
@@ -354,13 +498,22 @@ if visual.cl_during_setup, arenaRest(); end
 %% ---------------- NI DAQ session ----------------------------------------
 aoCol = struct('led', 1, 'phantom', 0);
 if ~hw.simulate
-    if anyCam, imaqreset; closepreview; end
+    if anyCam
+        try                 % close stale previews first; imaqreset then clears the adaptor
+            closepreview;
+        catch
+        end
+        imaqreset;
+    end
     devices = daq.getDevices;
     assert(~isempty(devices), 'No NI DAQ devices found.');
     if isempty(hw.ni_device), deviceID = devices(1).ID; else, deviceID = hw.ni_device; end
     fprintf('NI device  : %s\n', deviceID);
+    teardownState('deviceID') = deviceID;
+    teardownState('aoNames')  = {opto.ao};        % outputs the teardown returns to 0 V
 
     mainSession = daq.createSession('ni');
+    teardownState('mainSession') = mainSession;
     aiCh = addAnalogInputChannel(mainSession, deviceID, acq.ai_channels, 'Voltage');
     set(aiCh, 'TerminalConfig', acq.terminal_config);
     fprintf('AI channels: %s, %s\n', mat2str(acq.ai_channels), acq.terminal_config);
@@ -368,6 +521,7 @@ if ~hw.simulate
     if phantom.enable
         addAnalogOutputChannel(mainSession, deviceID, phantom.trigAO, 'Voltage'); % column 2 = Phantom trigger
         aoCol.phantom = 2;
+        teardownState('aoNames') = {opto.ao, phantom.trigAO};
     end
     if anyCam
         camTrigger = addCounterOutputChannel(mainSession, deviceID, basler.trigger_ctr, 'PulseGeneration');
@@ -391,6 +545,7 @@ if ~hw.simulate
     % NotifyWhenDataAvailableExceeds is set per block right after queueOutputData:
     % with analog output channels in the session it cannot be set before data is queued.
     lh = addlistener(mainSession, 'DataAvailable', @onDataAvailable);
+    teardownState('lh') = lh;
 end
 
 %% ---------------- Basler cameras ----------------------------------------
@@ -418,18 +573,18 @@ if anyCam
                'close Pylon Viewer / other GenTL clients, or set basler.<camera>.enable = false.'], ...
               strjoin(missing, ', '), basler.discover_timeout_s);
     end
-    if basler.top.enable,  [vids.top,  srcs.top]  = setupBasler(basler.top,  camInfo); end
-    if basler.side.enable, [vids.side, srcs.side] = setupBasler(basler.side, camInfo); end
+    if basler.top.enable,  [vids.top,  srcs.top]  = setupBasler('top',  camInfo, files.top_video_scratch);  teardownState('vids') = vids; end
+    if basler.side.enable, [vids.side, srcs.side] = setupBasler('side', camInfo, files.side_video_scratch); teardownState('vids') = vids; end
 end
 
 %% ---------------- Phantom connect / configure ---------------------------
 if phantom.enable
     try
         LoadPhantomLibraries();
-        ph.libsLoaded = true;
-        ph.pb = PoolBuilder([]);
+        ph.libsLoaded = true;       teardownState('ph') = ph;
+        ph.pb = PoolBuilder([]);    teardownState('ph') = ph;
         ph.pb.Register();
-        ph.pr = PoolRefresher();
+        ph.pr = PoolRefresher();    teardownState('ph') = ph; %#ok<NASGU> -- a handle the teardown reads
 
         t0 = tic; lastN = -1;
         while toc(t0) < phantom.discover_timeout_s
@@ -491,7 +646,7 @@ end
 if ~exist(phantom.saveFolder, 'dir') && phantom.enable, mkdir(phantom.saveFolder); end
 
 %% ---------------- live figure ------------------------------------------
-if plotting.enable, initLivePlot(); end
+if plotting.enable, initLivePlot(); plotLive = true; end
 
 %% ---------------- run blocks -------------------------------------------
 if anyCam
@@ -532,13 +687,20 @@ for block = 1:acq.blocks
     end
 
     if aoCol.phantom > 0, aoData = [ledSignal, phantomSignal]; else, aoData = ledSignal; end
+    aoData(end, :) = 0;   % never leave the LED / Phantom trigger latched when the block ends
     if ~hw.simulate
         queueOutputData(mainSession, aoData);
         mainSession.NotifyWhenDataAvailableExceeds = round(fs * acq.notify_period_s);
     end
 
-    if plotting.enable
-        drawBlockShading(block, rows, phantomPlanned && (phantom.record_each_block || block == phantom.block_to_record));
+    if plotAlive()
+        try
+            drawBlockShading(block, rows, phantomPlanned && (phantom.record_each_block || block == phantom.block_to_record));
+        catch ME
+            plotLive = false;
+            warning('run_session_unified:livePlot', ...
+                    'Block shading failed (%s); plotting disabled for the rest of the run.', ME.message);
+        end
     end
 
     % arena stimulus for this block
@@ -591,6 +753,11 @@ for block = 1:acq.blocks
         mainSession.stop();
     end
     arenaCmd('stop');
+    % Close the partial summary bin here, not just at the end of the run: global time
+    % jumps by TrialLength at a block boundary, so leftover samples carried across
+    % would be averaged into one bin straddling the discontinuity. A no-op whenever
+    % the chunk size divides evenly by plotting.bin_samples, which it does by default.
+    flushResidual();
     blockElapsed_s(block) = toc(tBlock);
     fprintf('  Block %d done in %.2f s, %d samples\n', block, blockElapsed_s(block), samplesThisBlock);
 
@@ -634,13 +801,11 @@ if ~isempty(vids.side), stop(vids.side); end
 arenaRest();
 if ~isempty(lh), delete(lh); lh = []; end
 
-%% ---------------- write Basler videos ----------------------------------
-if ~isempty(vids.top),  baslerInfo.top  = writeCameraVideo(vids.top,  srcs.top,  basler.top,  files.top_video);  end
-if ~isempty(vids.side), baslerInfo.side = writeCameraVideo(vids.side, srcs.side, basler.side, files.side_video); end
-if ~isempty(vids.top),  delete(vids.top);  vids.top  = []; end
-if ~isempty(vids.side), delete(vids.side); vids.side = []; end
-
-%% ---------------- assemble and save -------------------------------------
+%% ---------------- assemble and save (BEFORE the videos) -----------------
+% The DAQ data is the irreplaceable part of a session, so it goes to disk before
+% anything touches the cameras: an out-of-memory getdata, a full disk or a codec
+% failure in writeCameraVideo must not be able to take the whole run with it.
+% baslerInfo is saved as a placeholder here and appended for real further down.
 Data = Data(:, 1:wp);
 
 params = struct();
@@ -658,6 +823,7 @@ params.basler          = basler;
 params.plotting        = plotting;
 params.ni_device       = deviceID;
 params.data_rows       = [{'time_s'}, acq.ai_names];
+params.data_class      = class(Data);   % 'single' since 2026-09; cast on load if needed
 params.blockStartIdx   = blockStartIdx;
 params.blockStartTime  = blockStartTime;
 params.blockElapsed_s  = blockElapsed_s;
@@ -682,19 +848,78 @@ variables.CL_X_gain     = visual.CL_X_gain;
 
 fprintf('\nSaving %s ...\n', files.mat);
 saveArgs = {'Data', 'variables', 'allRandomizedStimOrders', 'stimTable', 'params', 'phantom', 'baslerInfo'};
-totalBytes = numel(Data) * 8;
-if totalBytes > 1.8e9, saveArgs{end + 1} = '-v7.3'; end
+% The default v7 format gzips the array. On analog noise that buys ~6 % while
+% costing ~3 s per 90 s block, and it scales with acq.blocks. Measured on a
+% 14 x 1.8e6 array: v7 2.9 s / 181 MB, -v7.3 4.2 s / 179 MB,
+% -v7.3 -nocompression 0.1 s / 192 MB. -nocompression is R2017a (9.2) and newer.
+% NOTE: v7.3 is HDF5. MATLAB load() is unaffected, but Python readers need h5py --
+% scipy.io.loadmat cannot read v7.3 files.
+saveArgs{end + 1} = '-v7.3';
+if ~verLessThan('matlab', '9.2'), saveArgs{end + 1} = '-nocompression'; end
+tSave = tic;
 save(files.mat, saveArgs{:});
-fprintf('Saved.\n');
+fprintf('Saved (%.1f s).\n', toc(tSave));
+
+%% ---------------- write Basler videos ----------------------------------
+% Each camera is isolated: one failing must not stop the other, the baslerInfo
+% append, or the summary plot. The DAQ data is already on disk at this point.
+if ~isempty(vids.top)
+    try
+        baslerInfo.top = writeCameraVideo(vids.top, srcs.top, basler.top, files.top_video_scratch);
+    catch ME
+        warning('run_session_unified:videoWrite', '%s: video write failed: %s', basler.top.label, ME.message);
+    end
+end
+if ~isempty(vids.side)
+    try
+        baslerInfo.side = writeCameraVideo(vids.side, srcs.side, basler.side, files.side_video_scratch);
+    catch ME
+        warning('run_session_unified:videoWrite', '%s: video write failed: %s', basler.side.label, ME.message);
+    end
+end
+if ~isempty(vids.top),  delete(vids.top);  vids.top  = []; end   % closes the DiskLogger file
+if ~isempty(vids.side), delete(vids.side); vids.side = []; end
+
+% Compress (ffmpeg, H.264, pending rotation applied) and move the finished videos from
+% the local scratch folder into saveFolder. Done only now, with the cameras released
+% and the .mat already saved, so a slow encode or Google Drive copy can cost time but
+% never data. On any failure the file stays in scratch and baslerInfo.<cam>.file says
+% where it is.
+if isfield(baslerInfo, 'top')
+    [baslerInfo.top, srcFile] = compressVideo(baslerInfo.top, files.top_video_scratch, files.top_video_h264, basler.h264);
+    baslerInfo.top = moveVideoToSaveFolder(baslerInfo.top, srcFile, files.top_video);
+end
+if isfield(baslerInfo, 'side')
+    [baslerInfo.side, srcFile] = compressVideo(baslerInfo.side, files.side_video_scratch, files.side_video_h264, basler.h264);
+    baslerInfo.side = moveVideoToSaveFolder(baslerInfo.side, srcFile, files.side_video);
+end
+
+if anyCam
+    try
+        save(files.mat, 'baslerInfo', '-append');   % replaces the placeholder saved above
+        fprintf('baslerInfo appended to %s\n', files.mat);
+    catch ME
+        warning('run_session_unified:baslerInfoAppend', ...
+                'Could not append baslerInfo to %s: %s', files.mat, ME.message);
+    end
+end
 
 %% ---------------- final plot -------------------------------------------
-if plotting.enable
+% The data is already on disk by this point, so a failure here costs only the
+% figure files: never let it skip the return value or the end-of-run sound.
+% (sgtitle is R2018b+, so this also covers older rig MATLAB releases.)
+if plotAlive()
+  try
     flushResidual();
     refreshSummary();
     sgtitle(hFig, FlyType, 'Color', 'w', 'Interpreter', 'none', 'FontSize', 9);
     drawnow;
     if plotting.save_svg, saveas(hFig, files.plot_svg, 'svg'); fprintf('Plot saved: %s\n', files.plot_svg); end
     if plotting.save_png, print(hFig, files.plot_png, '-dpng', '-r150'); fprintf('Plot saved: %s\n', files.plot_png); end
+  catch ME
+    warning('run_session_unified:finalPlot', ...
+            'Final plot failed: %s. The data in %s is unaffected.', ME.message, files.mat);
+  end
 end
 
 %% ---------------- done ------------------------------------------------
@@ -704,6 +929,17 @@ out = struct('Data', Data, 'variables', variables, 'params', params, 'phantom', 
 
 if hw.play_sound_at_end && ~hw.simulate, playEndSound(); end
 fprintf('\nAll done (%.1f s).\n', experimentElapsed_s);
+
+% Last, once MATLAB has nothing else to do, so the window is responsive at once.
+% Reads the file just written, so it shows exactly what was saved.
+if plotting.session_overview
+    try
+        session_overview(files.mat, plotting.overview_channels);
+    catch ME
+        warning('run_session_unified:sessionOverview', ...
+                'session_overview failed: %s. The data in %s is unaffected.', ME.message, files.mat);
+    end
+end
 
 %% ======================= NESTED FUNCTIONS ===============================
 
@@ -719,7 +955,32 @@ fprintf('\nAll done (%.1f s).\n', experimentElapsed_s);
         Data(2:nAI + 1, idx) = d(:, 1:nAI)';
         wp = wp + n;
         samplesThisBlock = samplesThisBlock + n;
-        if plotting.enable, updateLivePlot(t, d(:, 1:nAI)); end
+        % This runs inside the DataAvailable listener: nothing here may throw, or the
+        % error escapes the callback and aborts the whole session. The figure is
+        % operator-facing and can vanish at any moment (closed by hand, or a stray
+        % close all), and drawnow inside updateLivePlot can process that close
+        % mid-call -- hence the try/catch as well as the plotAlive() check.
+        if plotAlive()
+            try
+                updateLivePlot(t, d(:, 1:nAI));
+            catch ME
+                plotLive = false;
+                warning('run_session_unified:livePlot', ...
+                        'Live plot failed (%s); plotting disabled for the rest of the run. Acquisition continues.', ...
+                        ME.message);
+            end
+        end
+    end
+
+    function ok = plotAlive()
+        % True while the live figure exists and can be drawn into. The first time it
+        % is found gone, plotting is switched off for the remainder of the run so the
+        % experiment keeps going without a figure.
+        ok = plotLive && ~isempty(hFig) && isvalid(hFig);
+        if plotLive && ~ok
+            plotLive = false;
+            fprintf('Live figure closed; plotting disabled for the rest of the run (acquisition continues).\n');
+        end
     end
 
     function initLivePlot()
@@ -857,7 +1118,9 @@ fprintf('\nAll done (%.1f s).\n', experimentElapsed_s);
             set(hEmgLine, 'XData', t, 'YData', d(:, ch.emg)');
             set(hXLine,   'XData', t, 'YData', d(:, ch.arena_x)');
             set(hYLine,   'XData', t, 'YData', d(:, ch.arena_y)');
-            set([hRawAx hEmgAx hXAx], 'XLim', [t(1) t(end)]);
+            if numel(t) > 1          % a 1-sample chunk gives equal limits, which errors
+                set([hRawAx hEmgAx hXAx], 'XLim', [t(1) t(end)]);
+            end
         end
         tg = t(:) + (currentBlock - 1) * acq.TrialLength;              % global time
         resid = [resid; tg, 100 * d(:, ch.wbf), wbaRaw, d(:, ch.led), d(:, ch.basler_trig), d(:, ch.phantom_rec)];
@@ -978,14 +1241,15 @@ fprintf('\nAll done (%.1f s).\n', experimentElapsed_s);
         arenaCmd('start');
     end
 
-    function [vid, src] = setupBasler(cfg, camInfo)
+    function [vid, src] = setupBasler(camKey, camInfo, videoFile)
+        cfg   = basler.(camKey);
         names = {camInfo.DeviceInfo.DeviceName};
         idx = find(contains(names, ['(' cfg.serial ')']), 1);
         assert(~isempty(idx), '%s: serial %s not found among GenTL devices.', cfg.label, cfg.serial);
         fprintf('%s -> %s (DeviceID %d)\n', cfg.label, names{idx}, camInfo.DeviceInfo(idx).DeviceID);
         vid = videoinput('gentl', camInfo.DeviceInfo(idx).DeviceID, basler.format);
         triggerconfig(vid, 'hardware');
-        vid.LoggingMode      = 'memory';
+        vid.LoggingMode      = 'disk';   % frames encode to disk as they arrive; nothing buffers in RAM
         vid.FramesPerTrigger = inf;
         src = getselectedsource(vid);
         if cfg.exposure_active_out                 % Line3 = ExposureActive, active high (read back on AI11)
@@ -1011,47 +1275,82 @@ fprintf('\nAll done (%.1f s).\n', experimentElapsed_s);
         src.ExposureTime = basler.Exposure_time;
         src.Gain         = cfg.gain;
         src.Gamma        = cfg.gamma;
+
+        % Rotation must be baked in on-camera: with disk logging the frame goes
+        % straight from the sensor to the encoder, so MATLAB never sees it. Only
+        % 180 deg is expressible in GenICam (ReverseX + ReverseY); 90/270 are left
+        % for analysis and recorded in baslerInfo.<cam>.rotate_deg_pending.
+        basler.(camKey).rotation_applied   = 'none';
+        basler.(camKey).rotate_deg_pending = cfg.rotate_deg;
+        if cfg.rotate_deg == 180
+            try
+                src.ReverseX = 'True';
+                src.ReverseY = 'True';
+                basler.(camKey).rotation_applied   = 'camera_reverse_xy';
+                basler.(camKey).rotate_deg_pending = 0;
+                fprintf('  180 deg baked in on-camera (ReverseX + ReverseY)\n');
+            catch ME
+                warning('run_session_unified:cameraRotate', ...
+                        '%s: could not set ReverseX/ReverseY (%s). Video is unrotated; analysis must apply %d deg.', ...
+                        cfg.label, ME.message, cfg.rotate_deg);
+            end
+        elseif cfg.rotate_deg ~= 0
+            fprintf('  %d deg NOT applied (no GenICam equivalent); analysis must rotate. See baslerInfo.%s.rotate_deg_pending\n', ...
+                    cfg.rotate_deg, camKey);
+        end
+
+        % The DiskLogger must exist before start(); the engine opens and closes it.
+        vw = VideoWriter(videoFile, basler.video_profile);
+        vw.FrameRate = basler.fps;
+        if isprop(vw, 'Quality'), vw.Quality = basler.video_quality; end
+        vid.DiskLogger = vw;
+
         src.TriggerMode  = 'On';
         fprintf('  trigger %s on %s, exposure %g us, gain %.3f, gamma %.2f, binning %d\n', ...
                 src.TriggerMode, src.TriggerSource, src.ExposureTime, src.Gain, src.Gamma, cfg.binning);
+        fprintf('  streaming to %s (%s, quality %g)\n', videoFile, basler.video_profile, basler.video_quality);
     end
 
     function info = writeCameraVideo(vid, src, cfg, filename)
-        info = struct('label', cfg.label, 'file', filename, 'frames', 0, 'expected_frames', ...
-                      acq.blocks * acq.TrialLength * basler.fps, 'rotate_deg', cfg.rotate_deg);
+        % Disk logging did the encoding during the run; only the last buffered
+        % frames can still be in flight. Wait for the logger to drain, then report.
+        info = struct('label', cfg.label, 'file', filename, 'frames', 0, ...
+                      'frames_acquired', 0, 'dropped_frames', 0, 'expected_frames', ...
+                      acq.blocks * acq.TrialLength * basler.fps, ...
+                      'rotate_deg', cfg.rotate_deg, ...
+                      'rotation_applied', cfg.rotation_applied, ...
+                      'rotate_deg_pending', cfg.rotate_deg_pending, ...
+                      'video_profile', basler.video_profile, 'video_quality', basler.video_quality);
         try
             info.source_settings = get(src);
         catch
             info.source_settings = [];
         end
-        n = vid.FramesAvailable;
-        fprintf('%s: %d frames available (expected ~%d)\n', cfg.label, n, info.expected_frames);
-        if n == 0
-            warning('%s: no frames captured; no video written.', cfg.label);
-            return;
+        t0 = tic;
+        while vid.FramesAcquired ~= vid.DiskLoggerFrameCount
+            if toc(t0) > basler.disk_flush_timeout_s
+                warning('run_session_unified:diskFlush', ...
+                        '%s: disk logger still %d frame(s) behind after %g s; closing the file anyway.', ...
+                        cfg.label, vid.FramesAcquired - vid.DiskLoggerFrameCount, basler.disk_flush_timeout_s);
+                break;
+            end
+            pause(0.05);
         end
-        [frames, ts, md] = getdata(vid, n);
-        info.frames = size(frames, 4);
-        info.frame_time_s = ts;
-        try
-            info.first_frame_abs_time = md(1).AbsTime;
-            info.last_frame_abs_time  = md(end).AbsTime;
-        catch
+        info.frames_acquired = vid.FramesAcquired;
+        info.frames          = vid.DiskLoggerFrameCount;
+        info.dropped_frames  = info.frames_acquired - info.frames;
+        info.flush_wait_s    = toc(t0);
+        fprintf('%s: %d frames written to %s (acquired %d, expected ~%d, flush %.2f s)\n', ...
+                cfg.label, info.frames, filename, info.frames_acquired, info.expected_frames, info.flush_wait_s);
+        if info.frames == 0
+            warning('%s: no frames written to %s.', cfg.label, filename);
+        elseif info.dropped_frames > 0
+            warning('run_session_unified:droppedFrames', '%s: %d frame(s) acquired but never written.', ...
+                    cfg.label, info.dropped_frames);
         end
-        switch cfg.rotate_deg                                   % clockwise, all frames at once
-            case 90,  frames = flip(permute(frames, [2 1 3 4]), 2);
-            case 180, frames = flip(flip(frames, 1), 2);        % upside down + mirrored
-            case 270, frames = flip(permute(frames, [2 1 3 4]), 1);
+        if info.rotate_deg_pending ~= 0
+            fprintf('%s: video is UNROTATED; analysis must apply %d deg clockwise.\n', cfg.label, info.rotate_deg_pending);
         end
-        if cfg.rotate_deg ~= 0, fprintf('%s: rotated %d deg clockwise\n', cfg.label, cfg.rotate_deg); end
-        vw = VideoWriter(filename, basler.video_profile);
-        vw.FrameRate = basler.fps;
-        if isprop(vw, 'Quality'), vw.Quality = basler.video_quality; end
-        open(vw);
-        writeVideo(vw, frames);
-        close(vw);
-        info.frame_size = size(frames);
-        fprintf('%s: video written to %s\n', cfg.label, filename);
     end
 
     function phantomStartCapture()
@@ -1128,62 +1427,272 @@ fprintf('\nAll done (%.1f s).\n', experimentElapsed_s);
         end
     end
 
-    function cleanupAll()
-        % Idempotent teardown: safe to call after a normal run, an error, or Ctrl+C.
-        try
-            if ~isempty(lh), delete(lh); end
-        catch
-        end
-        try
-            if ~isempty(mainSession), stop(mainSession); release(mainSession); end
-        catch
-        end
-        for camKey = {'top', 'side'}
-            try
-                v = vids.(camKey{1});
-                if ~isempty(v) && isvalid(v), stop(v); delete(v); end
-            catch
-            end
-        end
-        try
-            if ~isempty(ph.pr), ph.pr.delete(); end
-        catch
-        end
-        try
-            if ~isempty(ph.pb)
-                try
-                    if ph.pb.IsRegistered, ph.pb.Unregister(); end
-                catch
-                end
-                ph.pb.delete();
-            end
-        catch
-        end
-        try
-            if ph.libsLoaded, UnloadPhantomLibraries(); end
-        catch
-        end
-    end
-
 end   % run_session_unified
 
 %% ======================= LOCAL FUNCTIONS ================================
 
-function S = mergeStruct(S, O)
-% Recursively copy fields of O onto S.
+function teardownAll(state)
+% Idempotent teardown: safe after a normal run, an error, or Ctrl+C. It reads only
+% state (see where teardownState is created): by the time an onCleanup task runs,
+% run_session_unified's own variables may already have been cleared.
+lh          = entry(state, 'lh');
+mainSession = entry(state, 'mainSession');
+vids        = entry(state, 'vids');
+ph          = entry(state, 'ph');
+try
+    if ~isempty(lh), delete(lh); end
+catch
+end
+try
+    if ~isempty(mainSession), stop(mainSession); end
+catch
+end
+zeroAnalogOutputs(state);     % before release: the fast path needs a live session
+try
+    if ~isempty(mainSession), release(mainSession); end
+catch
+end
+for camKey = {'top', 'side'}
+    try
+        v = vids.(camKey{1});
+        if ~isempty(v) && isvalid(v), stop(v); delete(v); end
+    catch
+    end
+end
+try
+    if ~isempty(ph.pr), ph.pr.delete(); end
+catch
+end
+try
+    if ~isempty(ph.pb)
+        try
+            if ph.pb.IsRegistered, ph.pb.Unregister(); end
+        catch
+        end
+        ph.pb.delete();
+    end
+catch
+end
+try
+    if ph.libsLoaded, UnloadPhantomLibraries(); end
+catch
+end
+end
+
+function zeroAnalogOutputs(state)
+% Drive every analog output back to 0 V. NI-DAQmx holds the last written sample when
+% a task is stopped or released, so aborting mid-stimulus would otherwise leave the
+% LED driver latched at opto.amplitude_V until MATLAB restarts. Fast path: an
+% on-demand scan on the session. If that is rejected (the session also owns the ctr0
+% PulseGeneration channel), release it and take the channels with a short-lived
+% AO-only session instead.
+mainSession = entry(state, 'mainSession');
+deviceID    = entry(state, 'deviceID');
+aoNames     = entry(state, 'aoNames');
+if isequal(entry(state, 'simulate'), true) || isempty(deviceID), return; end
+z = zeros(1, numel(aoNames));
+try
+    outputSingleScan(mainSession, z);
+    fprintf('Analog outputs (%s) returned to 0 V.\n', strjoin(aoNames, ', '));
+    return;
+catch
+end
+s = [];
+try
+    try
+        if ~isempty(mainSession), release(mainSession); end
+    catch
+    end
+    s = daq.createSession('ni');
+    for iAO = 1:numel(aoNames)
+        addAnalogOutputChannel(s, deviceID, aoNames{iAO}, 'Voltage');
+    end
+    outputSingleScan(s, z);
+    fprintf('Analog outputs (%s) returned to 0 V.\n', strjoin(aoNames, ', '));
+catch ME
+    warning('run_session_unified:aoZero', ...
+            'Could not return %s to 0 V: %s. CHECK THE LED DRIVER MANUALLY.', ...
+            strjoin(aoNames, ', '), ME.message);
+end
+try
+    if ~isempty(s), release(s); end
+catch
+end
+end
+
+function v = entry(state, key)
+% state(key), or [] for a resource that was never created.
+if isKey(state, key), v = state(key); else, v = []; end
+end
+
+function compress_video_h264_check(ffmpegSetting)
+% Resolve ffmpeg the same way compress_video_h264 will after the run; errors with
+% compress_video_h264:ffmpegNotFound if there is none, before any hardware is touched.
+exe = compress_video_h264('which', ffmpegSetting);
+fprintf('ffmpeg     : %s\n', exe);
+end
+
+function [info, outFile] = compressVideo(info, rawFile, mp4File, h)
+% ffmpeg pass for one camera: raw scratch AVI -> H.264 mp4 in the scratch folder,
+% applying the rotation the camera could not. Returns the file the move step should
+% take: the mp4 on success, the raw AVI when compression is off or failed.
+outFile = rawFile;
+info.h264 = struct('enabled', h.enable, 'ok', false);
+if ~h.enable || ~exist(rawFile, 'file'), return; end
+opts = h;
+opts.rotate_deg = info.rotate_deg_pending;
+fprintf('%s: compressing %s -> H.264 (crf %g, %s, rotate %d deg) ...\n', ...
+        info.label, rawFile, h.crf, h.preset, opts.rotate_deg);
+try
+    r = compress_video_h264(rawFile, mp4File, opts);
+catch ME
+    warning('run_session_unified:h264', '%s: compression not run (%s). The raw AVI is kept: %s', ...
+            info.label, ME.message, rawFile);
+    return;
+end
+info.h264 = r;
+info.h264.enabled = true;
+if ~r.ok
+    warning('run_session_unified:h264', '%s: ffmpeg failed (%.1f s). The raw AVI is kept: %s\n%s', ...
+            info.label, r.seconds, rawFile, r.output);
+    if exist(mp4File, 'file'), delete(mp4File); end
+    return;
+end
+if isfinite(r.frames) && r.frames ~= info.frames
+    warning('run_session_unified:h264Frames', '%s: mp4 has %d frames but %d were logged. The raw AVI is kept: %s', ...
+            info.label, r.frames, info.frames, rawFile);
+    outFile = mp4File;                               % still deliver the mp4, but do not delete the raw
+    info.raw_file_kept = rawFile;
+    return;
+end
+fprintf('%s: H.264 done in %.1f s, %.0f MB -> %.0f MB (%d frames)\n', ...
+        info.label, r.seconds, r.bytes_in / 1e6, r.bytes_out / 1e6, r.frames);
+info.rotation_applied   = 'ffmpeg';
+info.rotate_deg_pending = 0;
+outFile = mp4File;
+if h.keep_raw
+    info.raw_file_kept = rawFile;
+else
+    delete(rawFile);
+end
+end
+
+function info = moveVideoToSaveFolder(info, scratchFile, finalFile)
+% Move one finished video from the local scratch folder to its final location and
+% record the outcome in baslerInfo. A no-op when scratch and final are the same path.
+info.scratch_file = scratchFile;
+info.file         = scratchFile;
+info.moved        = false;
+if strcmpi(scratchFile, finalFile)
+    info.file  = finalFile;
+    info.moved = true;
+    return;
+end
+if ~exist(scratchFile, 'file')
+    warning('run_session_unified:videoMove', '%s: nothing to move, %s does not exist.', info.label, scratchFile);
+    return;
+end
+d = dir(scratchFile);
+tMove = tic;
+[ok, msg] = movefile(scratchFile, finalFile, 'f');
+if ok
+    info.file   = finalFile;
+    info.moved  = true;
+    info.move_s = toc(tMove);
+    fprintf('%s: moved to %s (%.0f MB, %.1f s)\n', info.label, finalFile, d.bytes / 1e6, info.move_s);
+else
+    warning('run_session_unified:videoMove', ...
+            '%s: could not move %s to %s: %s. The video is still in the scratch folder.', ...
+            info.label, scratchFile, finalFile, msg);
+end
+end
+
+function S = mergeStruct(S, O, path)
+% Recursively copy the fields of O onto S, rejecting anything S does not already
+% define. Overrides are the documented calling API, so a misspelled field has to
+% fail loudly here -- before any hardware is touched -- rather than silently
+% leaving the default in force and running a different experiment than the caller
+% asked for. ov.hw.simluate = true used to add a dead field and run the rig.
+if nargin < 3, path = ''; end
 if ~isstruct(O) || ~isstruct(S), S = O; return; end
-f = fieldnames(O);
+f     = fieldnames(O);
+valid = fieldnames(S);
 for i = 1:numel(f)
-    if isfield(S, f{i}) && isstruct(S.(f{i})) && isstruct(O.(f{i}))
-        S.(f{i}) = mergeStruct(S.(f{i}), O.(f{i}));
+    name = f{i};
+    if isempty(path)
+        here = name;              lvl = 'the top level';
     else
-        S.(f{i}) = O.(f{i});
+        here = [path '.' name];   lvl = path;
+    end
+    if ~isfield(S, name)
+        error('run_session_unified:unknownOverride', ...
+              ['Unknown override field "%s".%s\nValid fields at %s: %s\n' ...
+               'Add it to the USER SETTINGS block first if it is genuinely new.'], ...
+              here, suggestField(name, valid), lvl, strjoin(valid', ', '));
+    end
+    sIsStruct = isstruct(S.(name));
+    oIsStruct = isstruct(O.(name));
+    if sIsStruct && oIsStruct
+        S.(name) = mergeStruct(S.(name), O.(name), here);
+    elseif sIsStruct
+        error('run_session_unified:overrideType', ...
+              'Override "%s" must be a struct of sub-fields (%s), got a %s.', ...
+              here, strjoin(fieldnames(S.(name))', ', '), class(O.(name)));
+    elseif oIsStruct
+        error('run_session_unified:overrideType', ...
+              'Override "%s" must be a %s value like the default, not a struct.', ...
+              here, class(S.(name)));
+    else
+        S.(name) = O.(name);
     end
 end
 end
 
+function s = suggestField(name, valid)
+% Hint for the error above: catches case slips, transpositions and singular/plural.
+d   = cellfun(@(v) editDistance(name, v), valid);
+tol = max(2, ceil(numel(name) / 4));
+keep = d <= tol;
+if ~any(keep), s = ''; return; end
+hit = valid(keep);
+[~, ord] = sort(d(keep));
+hit = hit(ord);
+s = sprintf(' Did you mean "%s"?', strjoin(hit(1:min(3, numel(hit)))', '" or "'));
+end
+
+function d = editDistance(a, b)
+% Plain Levenshtein; only ever runs on the error path, so clarity beats speed.
+a = lower(a); b = lower(b);
+m = numel(a); n = numel(b);
+D = zeros(m + 1, n + 1);
+D(:, 1) = (0:m)';
+D(1, :) = 0:n;
+for ii = 1:m
+    for jj = 1:n
+        D(ii + 1, jj + 1) = min([D(ii, jj + 1) + 1, D(ii + 1, jj) + 1, D(ii, jj) + (a(ii) ~= b(jj))]);
+    end
+end
+d = D(m + 1, n + 1);
+end
+
 function s = prefixIfNonEmpty(prefix, value)
-if isempty(value), s = ''; else, s = [prefix value]; end
+t = asText(value);
+if isempty(t), s = ''; else, s = [prefix t]; end
+end
+
+function s = asText(v)
+% Metadata can arrive as a number through overrides (ov.meta.flyNumber = 1), where
+% [prefix value] would splice in a character code instead of the digits -- 'Fly'
+% followed by char(1) rather than 'Fly1'.
+if ischar(v)
+    s = v;
+elseif isstring(v) || iscellstr(v)
+    s = char(v);
+elseif isempty(v)
+    s = '';
+else
+    s = num2str(v);
+end
 end
 
 function s = niceName(name)
@@ -1229,8 +1738,8 @@ order = durs(p); amps = amps(p);
 onsets = round((TrialLength / (n + 1)) * (1:n) * fs);      % sample offsets (0-based)
 for i = 1:n
     nStim = round(fs * order(i) / 1000);
-    sig = placeTrain(sig, onsets(i), nStim, amps(i), opto.period_samples, opto.on_samples);
-    rows(i, :) = [onsets(i) / fs, (onsets(i) + nStim) / fs, order(i), amps(i), 1];
+    [sig, endSamp] = placeTrain(sig, onsets(i), nStim, amps(i), fs, opto.Frequency, opto.duty_cycle);
+    rows(i, :) = [onsets(i) / fs, endSamp / fs, order(i), amps(i), 1];   % endSamp = as delivered
 end
 end
 
@@ -1246,20 +1755,27 @@ durs_ms = round(diff(W, 1, 2)' * 1000);
 for i = 1:n
     on0   = round(W(i, 1) * fs);
     nStim = round((W(i, 2) - W(i, 1)) * fs);
-    sig = placeTrain(sig, on0, nStim, amps(i), opto.period_samples, opto.on_samples);
-    rows(i, :) = [on0 / fs, (on0 + nStim) / fs, durs_ms(i), amps(i), 2];
+    [sig, endSamp] = placeTrain(sig, on0, nStim, amps(i), fs, opto.Frequency, opto.duty_cycle);
+    rows(i, :) = [on0 / fs, endSamp / fs, durs_ms(i), amps(i), 2];   % endSamp = as delivered
 end
 end
 
-function sig = placeTrain(sig, onset0, nStim, amp, period, onS)
+function [sig, endSamp] = placeTrain(sig, onset0, nStim, amp, fs, frequency, dutyCycle)
+% Write one gated burst into sig at 0-based sample offset onset0, clipped to the
+% end of the block. The carrier comes from the shared pulseTrain kernel, so the
+% realised rate stays exact and a sub-sample pulse width raises an error instead
+% of silently producing an all-zero burst. Only the clipped length is generated.
+%
+% endSamp is the last sample the burst actually occupies after clipping, so the
+% caller can log what was delivered rather than what was asked for. A sham (0 V,
+% or 0 ms) still reports its nominal window: the epoch occupies time even though
+% no light comes out, and stimTable has to mark it.
+endSamp = min(numel(sig), onset0 + max(0, nStim));
 if nStim <= 0 || amp == 0, return; end
-cycle = [amp * ones(onS, 1); zeros(period - onS, 1)];
-train = repmat(cycle, ceil(nStim / period), 1);
-train = train(1:nStim);
 i0 = onset0 + 1;
 i1 = min(numel(sig), onset0 + nStim);
 if i1 < i0, return; end
-sig(i0:i1) = train(1:(i1 - i0 + 1));
+sig(i0:i1) = pulseTrain(i1 - i0 + 1, amp, fs, frequency, dutyCycle);
 end
 
 function [riseTimes, fallTimes, onTime, offTime] = gateEdges(t, gate)
