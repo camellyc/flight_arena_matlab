@@ -24,7 +24,7 @@ meta.experiment_name   = 'R71F05_ChR';     % e.g. SpINB_ChR
 meta.genotype          = 'R71F05';  % e.g. IS46338_ChR_4d_F
 meta.flyNumber         = 'ba04';
 meta.trialNum          = '4';
-meta.stimulus_regime   = '2/5ms';                 % e.g. 0-3000ms, 3000msx3, 10000ms
+meta.stimulus_regime   = '2-5ms';                 % e.g. 0-3000ms, 3000msx3, 10000ms
 meta.stimulus_position = 'thorax';
 meta.phantom_position  = '';                      % sp1, sp2, wing, ''
 meta.visual_stim_type  = 'closed loop stripe';
@@ -49,6 +49,7 @@ acq.ai_names        = {'LED_driver','WBF','WBA_left','WBA_right','hutchen_left',
                        'phantom_recording'};
 acq.terminal_config = 'SingleEnded';   % RSE. AI8-AI14 carry their own signals, so differential pairs are impossible
 acq.notify_period_s = 0.1;     % DataAvailable callback period (plot update rate)
+acq.ttl_threshold_V = 1.5;     % V; a TTL loop-back (Basler trigger, Phantom Recording) above this reads as high
 
 % --- Visual stimulus (arena) ---
 % SD-card patterns: 14 = closed-loop stripe (Pattern_2_stripe_48P_RC),
@@ -90,15 +91,13 @@ basler.trigger_ctr             = 'ctr0';
 basler.trigger_initial_delay_s = 0.05;
 basler.format                  = 'Mono8';
 % Frames stream to disk during acquisition (LoggingMode = 'disk' + DiskLogger), so
-% nothing is buffered in RAM. The stream is UNCOMPRESSED: the disk logger hands every
-% frame to a MATLAB VideoWriter on the MATLAB thread, and MATLAB's Motion JPEG encoder
-% measured only 109 fps (top, 640x512) / 75 fps (side, 800x600) on this PC against the
-% 400 fps two cameras deliver -- the interpreter saturated, the live plot and DAQ
-% callbacks stalled and frames were dropped (2026-09-15). Grayscale AVI measured
-% 765 / 636 fps and ~160 MB/s total, well inside the NVMe. Compression happens after
-% the run with ffmpeg (basler.h264 below).
-basler.video_profile           = 'Grayscale AVI';   % 'Grayscale AVI' (uncompressed) | 'Motion JPEG AVI' | 'MPEG-4'
-basler.video_quality           = 90;    % only used by profiles with a Quality property (Motion JPEG AVI, MPEG-4)
+% nothing is buffered in RAM. The stream is UNCOMPRESSED Grayscale AVI, not a choice:
+% the disk logger hands every frame to a MATLAB VideoWriter on the MATLAB thread, and
+% MATLAB's Motion JPEG encoder measured only 109 fps (top, 640x512) / 75 fps (side,
+% 800x600) on this PC against the 400 fps two cameras deliver -- the interpreter
+% saturated, the live plot and DAQ callbacks stalled and frames were dropped
+% (2026-09-15). Grayscale AVI measured 765 / 636 fps and ~160 MB/s total, well inside
+% the NVMe. Compression happens after the run with ffmpeg (basler.h264 below).
 basler.discover_timeout_s      = 5;     % wait up to this long for the cameras to enumerate after imaqreset
 basler.disk_flush_timeout_s    = 30;    % wait up to this long for the disk logger to drain after stop
 % The videos stream to this LOCAL folder during the run and are moved into saveFolder
@@ -143,7 +142,6 @@ phantom.trigAO        = 'ao1';         % -> Phantom "1 Trigger" input
 phantom.trigAmp_V     = 5.0;
 phantom.trigPulse_s   = 0.050;
 phantom.gate_ai       = 'phantom_recording';  % acq.ai_names entry carrying the Phantom "Recording" output ('' = none)
-phantom.gate_threshold_V = 1.5;               % TTL threshold for that channel
 phantom.gate_invert   = false;
 phantom.record_each_block = false;
 phantom.block_to_record   = 1;
@@ -155,12 +153,7 @@ phantom.discover_timeout_s = 10;
 % --- Plotting ---
 plotting.enable      = true;
 plotting.show_raw    = true;   % raw panels of the latest chunk: WBF/WBA/LED/Hutchen, EMG, arena X/Y
-% column of each plotted signal within acq.ai_channels (1-based); edit if the wiring changes
-plotting.ch = struct('led', 1, 'wbf', 2, 'wbaL', 3, 'wbaR', 4, 'hutchen_left', 5, 'hutchen_right', 6, ...
-                     'arena_x', 7, 'arena_y', 8, 'emg', 9, 'basler_trig', 10, 'phantom_fsync', 11, ...
-                     'basler_shutter', 12, 'phantom_rec', 13);
 plotting.wba_gain    = 20;     % delta WBA (V) is multiplied by this to share the delta WBF (Hz) axis
-plotting.trigger_threshold_V = 2.5;   % Basler trigger loop-back above this = camera recording
 plotting.bin_samples = 100;    % summary traces = block means of this many samples 
 plotting.baseline_s  = 5;      % baseline window for delta WBF / WBA (first seconds of the experiment)
 plotting.ylim        = [-100 50];

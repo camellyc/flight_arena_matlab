@@ -29,7 +29,7 @@ function sig = pulseTrain(nSamples, amplitude, Fs, frequency, dutyCycle)
 %     pulseTrain:pulseTooShort     the on-phase is under one sample, which would
 %                                  otherwise produce a silently all-zero burst
 %
-%   See also MAKESTIMTRAIN, RUN_SESSION_UNIFIED.
+%   See also RUN_SESSION_UNIFIED.
 
 if nSamples <= 0
     sig = zeros(0, 1);

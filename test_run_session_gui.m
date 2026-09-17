@@ -116,7 +116,7 @@ end
 end
 
 function testSettingsUnderAHeadingBelongToIt(testCase)
-% A heading (basler.top, plotting.ch, ...) must be followed only by that struct's own
+% A heading (basler.top, basler.h264, ...) must be followed only by that struct's own
 % settings: a plain setting listed after it would read as one of them. Every nested
 % struct gets exactly one heading, so the check cannot pass by finding none.
 fig = run_session_gui();
@@ -488,7 +488,7 @@ v = others{1};
 end
 
 function n = nestedCount(s, depth)
-% Structs below the section level (basler.top, plotting.ch, ...): the ones that get a heading.
+% Structs below the section level (basler.top, basler.h264, ...): the ones that get a heading.
 n = 0;
 f = fieldnames(s);
 for i = 1:numel(f)

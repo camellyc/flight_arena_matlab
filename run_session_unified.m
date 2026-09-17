@@ -54,11 +54,12 @@ function out = run_session_unified(overrides)
 %   Analysis scripts resolve rows by name through params.data_rows (see data_rows.m).
 %
 % OUTPUT FILES (all in saveFolder, one shared time-stamped base name)
-%   <base>.mat             Data (14 x N), variables, allRandomizedStimOrders,
-%                          stimTable, params, phantom, baslerInfo
+%   <base>.mat             Data (14 x N), allRandomizedStimOrders, stimTable, params
+%                          (settings, code version and source text), phantom, baslerInfo
+%   <base>_log.txt         everything printed to the command window during the run
 %   <base>_plot.svg/.png   summary figure
 %   <base>_TopCamera.mp4, <base>_SideCamera.mp4   (H.264). During the run the frames
-%                          stream uncompressed (basler.video_profile) to
+%                          stream as uncompressed Grayscale AVI to
 %                          basler.video_scratch_folder on a local NVMe; after the .mat is
 %                          saved, ffmpeg compresses each file (basler.h264), applying the
 %                          rotate_deg that could not be done on-camera, and the mp4 is
@@ -81,6 +82,7 @@ if defaultsOnly, out = S; return; end   % the settings file, exactly as override
 S = mergeStruct(S, overrides);
 saveFolder = S.saveFolder; meta = S.meta; hw = S.hw; acq = S.acq; visual = S.visual;
 opto = S.opto; basler = S.basler; phantom = S.phantom; plotting = S.plotting;
+nameOf = fileNameParts(meta);   % metadata as file-name tokens: text, with characters Windows refuses replaced
 
 scriptStart = datetime('now', 'TimeZone', 'local');
 
@@ -105,10 +107,14 @@ assert(eps(single(acq.TrialLength)) < 1 / fs, ...
      'TrialLength (max ~%.0f s at this rate) or store Data as double.'], ...
     acq.TrialLength, fs, acq.TrialLength, eps(single(acq.TrialLength)), 1 / fs, ...
     double(acq.TrialLength) * (1 / fs) / double(eps(single(acq.TrialLength))));
-chVals = cellfun(@(f) plotting.ch.(f), fieldnames(plotting.ch));
-assert(all(chVals >= 1 & chVals <= nAI), 'plotting.ch entries must index into acq.ai_channels (1..%d).', nAI);
+% Columns of the signals the live plot and the simulator refer to, resolved by name
+% from acq.ai_names: a rewire is a one-line change there and nothing can point at the
+% wrong row. Saved in params.plotting.ch like the settings it derives from.
+plotting.ch = channelColumns(acq.ai_names);
 
-% Basler rotation values and exposure clamp (90 % of frame period)
+% Basler stream format (see session_defaults for why it is not a setting), rotation
+% values and exposure clamp (90 % of frame period)
+basler.video_profile = 'Grayscale AVI';
 assert(any(basler.top.rotate_deg  == [0 90 180 270]), 'basler.top.rotate_deg must be 0, 90, 180 or 270.');
 assert(any(basler.side.rotate_deg == [0 90 180 270]), 'basler.side.rotate_deg must be 0, 90, 180 or 270.');
 max_exposure = (1e6 / basler.fps) * 0.9;
@@ -123,11 +129,7 @@ assert(any(strcmp(opto.mode, {'randomized', 'windows', 'both', 'none'})), 'opto.
 % Carrier geometry. duty_cycle is exact rather than quantised to whole samples:
 % the shared pulseTrain kernel uses a modular phase, so the realised pulse rate
 % matches opto.Frequency even when the period is not a whole number of samples.
-% period_samples / on_samples are kept for the saved metadata only and may now be
-% fractional -- nothing builds the waveform from them any more.
-opto.duty_cycle     = min(1, opto.PulseDuration / 1000 * opto.Frequency);
-opto.period_samples = fs / opto.Frequency;
-opto.on_samples     = opto.duty_cycle * opto.period_samples;
+opto.duty_cycle = min(1, opto.PulseDuration / 1000 * opto.Frequency);
 if opto.PulseDuration / 1000 * opto.Frequency >= 1 && ~strcmp(opto.mode, 'none')
     warning('PulseDuration >= 1/Frequency: LED will be continuous during stimuli.');
 end
@@ -175,7 +177,7 @@ if phantom.enable
         'phantom.window_s must lie within [0 TrialLength]');
 end
 phantom.serial     = uint32(phantom.serial);
-phantom.saveFolder = fullfile(phantom.saveRoot, meta.experiment_name);
+phantom.saveFolder = fullfile(phantom.saveRoot, nameOf.experiment_name);
 phantom.gate_col = [];                                   % column of the Recording signal within acq.ai_channels
 if phantom.enable && ~isempty(phantom.gate_ai)
     phantom.gate_col = find(strcmp(acq.ai_names, phantom.gate_ai), 1);
@@ -188,7 +190,7 @@ end
 % file and every run came out as Trial1. Appending a literal 'Trial*' token to the
 % parts list makes that impossible -- it degrades to '*_Trial*.mat' at worst.
 if ~exist(saveFolder, 'dir'), mkdir(saveFolder); end
-trialGlobParts = {meta.experiment_name, meta.genotype, prefixIfNonEmpty('Fly', meta.flyNumber), 'Trial*'};
+trialGlobParts = {nameOf.experiment_name, nameOf.genotype, prefixIfNonEmpty('Fly', nameOf.flyNumber), 'Trial*'};
 trialGlobParts = trialGlobParts(~cellfun(@isempty, trialGlobParts));
 trialGlob  = ['*_' strjoin(trialGlobParts, '_') '.mat'];
 existing   = dir(fullfile(saveFolder, trialGlob));
@@ -210,10 +212,9 @@ elseif ismember(str2double(asText(meta.trialNum)), usedTrials)
              'time-stamped so nothing is overwritten, but two files will claim the same trial number.'], ...
             asText(meta.trialNum), saveFolder, numel(existing), trialGlob);
 end
-parts = {meta.experiment_name, meta.genotype, prefixIfNonEmpty('Fly', meta.flyNumber), ...
-         prefixIfNonEmpty('Trial', meta.trialNum), meta.stimulus_regime, meta.stimulus_position, ...
-         meta.phantom_position, meta.visual_stim_type, meta.carbon_dioxide};
-parts = cellfun(@asText, parts, 'UniformOutput', false);   % overrides may pass numbers
+parts = {nameOf.experiment_name, nameOf.genotype, prefixIfNonEmpty('Fly', nameOf.flyNumber), ...
+         prefixIfNonEmpty('Trial', meta.trialNum), nameOf.stimulus_regime, nameOf.stimulus_position, ...
+         nameOf.phantom_position, nameOf.visual_stim_type, nameOf.carbon_dioxide};
 parts = parts(~cellfun(@isempty, parts));
 FlyType      = strjoin(parts, '_');
 savedate     = datestr(scriptStart, 'yyyy_mmdd_HHMMSS');
@@ -230,12 +231,7 @@ if exist(files.mat, 'file')
 end
 files.plot_svg   = fullfile(saveFolder, [baseFileName '_plot.svg']);
 files.plot_png   = fullfile(saveFolder, [baseFileName '_plot.png']);
-switch lower(basler.video_profile)                      % container matched to the codec
-    case 'mpeg-4',                              vidExt = '.mp4';
-    case {'motion jpeg avi', 'grayscale avi', 'uncompressed avi'}, vidExt = '.avi';
-    case {'archival', 'motion jpeg 2000'},      vidExt = '.mj2';
-    otherwise,                                  vidExt = '.avi';
-end
+vidExt = '.avi';                                        % the Grayscale AVI container
 basler.video_ext = vidExt;
 if basler.h264.enable, finalExt = '.mp4'; else, finalExt = vidExt; end
 files.top_video  = fullfile(saveFolder, [baseFileName '_' basler.top.label finalExt]);   % final location
@@ -243,7 +239,7 @@ files.side_video = fullfile(saveFolder, [baseFileName '_' basler.side.label fina
 % Where the DiskLogger actually writes during the run (see basler.video_scratch_folder),
 % and where the ffmpeg pass puts its mp4 before the move.
 if isempty(basler.video_scratch_folder), scratchDir = saveFolder; else, scratchDir = basler.video_scratch_folder; end
-if anyCam && ~exist(scratchDir, 'dir'), mkdir(scratchDir); end
+if ~exist(scratchDir, 'dir'), mkdir(scratchDir); end   % videos and the session log stream here
 files.top_video_scratch  = fullfile(scratchDir, [baseFileName '_' basler.top.label vidExt]);
 files.side_video_scratch = fullfile(scratchDir, [baseFileName '_' basler.side.label vidExt]);
 files.top_video_h264     = fullfile(scratchDir, [baseFileName '_' basler.top.label '.mp4']);
@@ -257,6 +253,25 @@ if strcmpi(phantom.save_format, 'cine')
 else
     files.phantom = fullfile(phantom.saveFolder, [baseFileName '_PhantomCamera']);   % folder of TIFFs
 end
+
+% Everything the teardown needs is registered in teardownState (a handle) as it is
+% created, and teardownAll is a local, not nested, function that reads only that.
+% MATLAB clears this function's variables -- the ones nested functions share --
+% before an onCleanup task runs at exit (normal, error and Ctrl+C alike), so a nested
+% teardown found hw, mainSession, vids, ... already destroyed and stopped before it
+% had zeroed the analog outputs or released anything.
+teardownState = containers.Map();
+teardownState('simulate') = hw.simulate;
+cleanupObj = onCleanup(@() teardownAll(teardownState));   % runs on normal exit, error, or Ctrl+C
+
+% From here on everything printed to the command window also goes to <base>_log.txt:
+% in the scratch folder while the session runs (saveFolder may be a slow network
+% drive), moved next to the .mat by the teardown when the session ends, however it
+% ends. A diary the caller had running is taken over.
+files.log         = fullfile(saveFolder, [baseFileName '_log.txt']);
+files.log_scratch = fullfile(scratchDir, [baseFileName '_log.txt']);
+teardownState('log') = struct('scratch', files.log_scratch, 'final', files.log);
+diary(files.log_scratch);
 
 fprintf('\n===== %s =====\n', mfilename);
 fprintf('Fly        : %s\n', FlyType);
@@ -325,15 +340,6 @@ phantom.save_time_s    = nan(acq.blocks, 1);
 phantom.init_ok = false;
 baslerInfo = struct();
 
-% Everything the teardown needs is registered in teardownState (a handle) as it is
-% created, and teardownAll is a local, not nested, function that reads only that.
-% MATLAB clears this function's variables -- the ones nested functions share --
-% before an onCleanup task runs at exit (normal, error and Ctrl+C alike), so a nested
-% teardown found hw, mainSession, vids, ... already destroyed and stopped before it
-% had zeroed the analog outputs or released anything.
-teardownState = containers.Map();
-teardownState('simulate') = hw.simulate;
-cleanupObj = onCleanup(@() teardownAll(teardownState));   % runs on normal exit, error, or Ctrl+C
 
 %% ---------------- arena: closed loop while everything loads ------------
 if visual.cl_during_setup, arenaRest(); end
@@ -607,7 +613,7 @@ for block = 1:acq.blocks
     % Recording gate edges for this block, from the Phantom "Recording" analog channel
     if doPhantomThisBlock && ~isempty(phantom.gate_col)
         bIdx = blockStartIdx(block):wp;
-        g = Data(1 + phantom.gate_col, bIdx) > phantom.gate_threshold_V;
+        g = Data(1 + phantom.gate_col, bIdx) > acq.ttl_threshold_V;
         if phantom.gate_invert, g = ~g; end
         [riseT, fallT, onT, offT] = gateEdges(Data(1, bIdx), g);
         phantom.rec_rise_times_s{block} = riseT; phantom.rec_fall_times_s{block} = fallT;
@@ -675,22 +681,16 @@ params.start_time      = datestr(scriptStart, 'yyyy-mm-dd HH:MM:SS');
 params.end_time        = datestr(datetime('now', 'TimeZone', 'local'), 'yyyy-mm-dd HH:MM:SS');
 params.matlab_version  = version;
 params.computer        = getenv('COMPUTERNAME');
+% What produced this file: the commit of the code folder (and whether it carried
+% uncommitted changes) plus the full text of both source files, so a session can be
+% traced even after session_defaults.m has been rewritten by later runs.
+[params.git_commit, params.git_dirty] = codeVersion(fileparts(mfilename('fullpath')));
+params.script_text   = fileread(which(mfilename));
+params.defaults_text = fileread(which('session_defaults'));
 params.stimTable_columns = {'block', 'stim_idx', 'onset_s', 'offset_s', 'duration_ms', 'amplitude_V', 'onset_global_s', 'source_1randomized_2window'};
 
-% Legacy struct: summarize_*.m read SampleRate, blocks and Frequency; the other
-% fields match what older session files contained. Everything else lives in params.
-variables = struct();
-variables.SampleRate    = fs;
-variables.blocks        = acq.blocks;
-variables.TrialLength   = acq.TrialLength;
-variables.Frequency     = opto.Frequency;
-variables.PulseDuration = opto.PulseDuration;
-variables.Basler_fps    = basler.fps;
-variables.Exposure_time = basler.Exposure_time;
-variables.CL_X_gain     = visual.CL_X_gain;
-
 fprintf('\nSaving %s ...\n', files.mat);
-saveArgs = {'Data', 'variables', 'allRandomizedStimOrders', 'stimTable', 'params', 'phantom', 'baslerInfo'};
+saveArgs = {'Data', 'allRandomizedStimOrders', 'stimTable', 'params', 'phantom', 'baslerInfo'};
 % The default v7 format gzips the array. On analog noise that buys ~6 % while
 % costing ~3 s per 90 s block, and it scales with acq.blocks. Measured on a
 % 14 x 1.8e6 array: v7 2.9 s / 181 MB, -v7.3 4.2 s / 179 MB,
@@ -766,7 +766,7 @@ if plotAlive()
 end
 
 %% ---------------- done ------------------------------------------------
-out = struct('Data', Data, 'variables', variables, 'params', params, 'phantom', phantom, ...
+out = struct('Data', Data, 'params', params, 'phantom', phantom, ...
              'stimTable', stimTable, 'allRandomizedStimOrders', {allRandomizedStimOrders}, ...
              'baslerInfo', baslerInfo);
 
@@ -979,8 +979,8 @@ end
             decWBF(dp + 1:dp + nb)   = mu(:, 2)';
             decWBA(dp + 1:dp + nb)   = mu(:, 3)';
             decLED(dp + 1:dp + nb)   = led;
-            decTrig(dp + 1:dp + nb)  = trg > plotting.trigger_threshold_V;
-            decPhRec(dp + 1:dp + nb) = rec > phantom.gate_threshold_V;
+            decTrig(dp + 1:dp + nb)  = trg > acq.ttl_threshold_V;
+            decPhRec(dp + 1:dp + nb) = rec > acq.ttl_threshold_V;
             dp = dp + nb;
             resid = resid(m + 1:end, :);
             refreshSummary();
@@ -993,8 +993,8 @@ end
             dp = dp + 1;
             decT(dp) = mean(resid(:, 1)); decWBF(dp) = mean(resid(:, 2));
             decWBA(dp) = mean(resid(:, 3)); decLED(dp) = max(resid(:, 4));
-            decTrig(dp)  = max(resid(:, 5)) > plotting.trigger_threshold_V;
-            decPhRec(dp) = max(resid(:, 6)) > phantom.gate_threshold_V;
+            decTrig(dp)  = max(resid(:, 5)) > acq.ttl_threshold_V;
+            decPhRec(dp) = max(resid(:, 6)) > acq.ttl_threshold_V;
             resid = zeros(0, 6);
         end
     end
@@ -1044,7 +1044,14 @@ end
         fsync = 5 * double(mod(t * phantom.fps, 1) < 0.5);
         shutter = trg;                                           % ExposureActive, active high
         phrec = 5 * double(t >= phantom.window_s(1) & t <= phantom.window_s(2));
-        evt = struct('TimeStamps', t, 'Data', [led, wbf, wbaL, wbaR, hutL, hutR, ax, ay, emg, trg, fsync, shutter, phrec]);
+        d = zeros(n, nAI);                                       % columns by name, as the DAQ delivers them
+        ch = plotting.ch;
+        d(:, ch.led) = led;   d(:, ch.wbf) = wbf;   d(:, ch.wbaL) = wbaL;   d(:, ch.wbaR) = wbaR;
+        d(:, ch.hutchen_left) = hutL;   d(:, ch.hutchen_right) = hutR;
+        d(:, ch.arena_x) = ax;   d(:, ch.arena_y) = ay;   d(:, ch.emg) = emg;
+        d(:, ch.basler_trig) = trg;   d(:, ch.phantom_fsync) = fsync;
+        d(:, ch.basler_shutter) = shutter;   d(:, ch.phantom_rec) = phrec;
+        evt = struct('TimeStamps', t, 'Data', d);
     end
 
     function arenaCmd(cmd, arg)
@@ -1145,13 +1152,12 @@ end
         % The DiskLogger must exist before start(); the engine opens and closes it.
         vw = VideoWriter(videoFile, basler.video_profile);
         vw.FrameRate = basler.fps;
-        if isprop(vw, 'Quality'), vw.Quality = basler.video_quality; end
         vid.DiskLogger = vw;
 
         src.TriggerMode  = 'On';
         fprintf('  trigger %s on %s, exposure %g us, gain %.3f, gamma %.2f, binning %d\n', ...
                 src.TriggerMode, src.TriggerSource, src.ExposureTime, src.Gain, src.Gamma, cfg.binning);
-        fprintf('  streaming to %s (%s, quality %g)\n', videoFile, basler.video_profile, basler.video_quality);
+        fprintf('  streaming to %s (%s)\n', videoFile, basler.video_profile);
     end
 
     function info = writeCameraVideo(vid, src, cfg, filename)
@@ -1163,7 +1169,7 @@ end
                       'rotate_deg', cfg.rotate_deg, ...
                       'rotation_applied', cfg.rotation_applied, ...
                       'rotate_deg_pending', cfg.rotate_deg_pending, ...
-                      'video_profile', basler.video_profile, 'video_quality', basler.video_quality);
+                      'video_profile', basler.video_profile);
         try
             info.source_settings = get(src);
         catch
@@ -1319,6 +1325,82 @@ end
 try
     if ph.libsLoaded, UnloadPhantomLibraries(); end
 catch
+end
+closeSessionLog(entry(state, 'log'));   % last, so the lines above are in the log
+end
+
+function closeSessionLog(log)
+% Stop the diary and move <base>_log.txt from the scratch folder next to the .mat.
+% Nothing here may throw: this runs inside the teardown.
+if isempty(log), return; end
+try
+    if strcmp(get(0, 'Diary'), 'on'), diary off; end
+catch
+end
+try
+    if exist(log.scratch, 'file') == 2 && ~strcmpi(log.scratch, log.final)
+        [ok, msg] = movefile(log.scratch, log.final, 'f');
+        if ~ok
+            warning('run_session_unified:logMove', 'Could not move the session log %s to %s: %s', ...
+                    log.scratch, log.final, msg);
+        end
+    end
+catch
+end
+end
+
+function [commit, dirty] = codeVersion(folder)
+% HEAD commit of the git repository holding folder, and whether tracked files had
+% uncommitted changes when the session ran. 'unknown' / NaN when git is not on the
+% PATH or the folder is not a repository.
+commit = 'unknown'; dirty = NaN;
+try
+    [st, txt] = system(sprintf('git -C "%s" rev-parse HEAD', folder));
+    if st ~= 0, return; end
+    commit = strtrim(txt);
+    [st, txt] = system(sprintf('git -C "%s" status --porcelain --untracked-files=no', folder));
+    if st == 0, dirty = ~isempty(strtrim(txt)); end
+catch
+end
+end
+
+function ch = channelColumns(aiNames)
+% Column within acq.ai_names of each signal the code refers to by a short key.
+wanted = {'led', 'LED_driver'; 'wbf', 'WBF'; 'wbaL', 'WBA_left'; 'wbaR', 'WBA_right'; ...
+          'hutchen_left', 'hutchen_left'; 'hutchen_right', 'hutchen_right'; ...
+          'arena_x', 'arena_x'; 'arena_y', 'arena_y'; 'emg', 'EMG'; ...
+          'basler_trig', 'basler_trigger'; 'phantom_fsync', 'phantom_fsync'; ...
+          'basler_shutter', 'basler_shutter'; 'phantom_rec', 'phantom_recording'};
+ch = struct();
+for k = 1:size(wanted, 1)
+    col = find(strcmpi(aiNames, wanted{k, 2}), 1);
+    if isempty(col)
+        error('run_session_unified:channelName', ...
+              'acq.ai_names has no entry "%s" (the %s signal). Names present: %s', ...
+              wanted{k, 2}, wanted{k, 1}, strjoin(aiNames, ', '));
+    end
+    ch.(wanted{k, 1}) = col;
+end
+end
+
+function [t, changed] = fileNameParts(meta)
+% The metadata fields that build the file name, as text with every character Windows
+% refuses in a file name replaced by '-'. A '/' in meta.stimulus_regime ('2/5ms')
+% used to turn the base name into a path through a folder that does not exist, and
+% the save failed after the whole session had run. params.meta keeps the values as
+% entered.
+fieldsUsed = {'experiment_name', 'genotype', 'flyNumber', 'trialNum', 'stimulus_regime', ...
+              'stimulus_position', 'phantom_position', 'visual_stim_type', 'carbon_dioxide'};
+t = struct(); changed = {};
+for k = 1:numel(fieldsUsed)
+    raw   = asText(meta.(fieldsUsed{k}));
+    clean = regexprep(strtrim(raw), '[\\/:*?"<>|\x00-\x1F]', '-');
+    if ~strcmp(clean, raw), changed{end + 1} = sprintf('%s ''%s'' -> ''%s''', fieldsUsed{k}, raw, clean); end %#ok<AGROW>
+    t.(fieldsUsed{k}) = clean;
+end
+if ~isempty(changed)
+    warning('run_session_unified:fileNameSanitized', ...
+            'Changed for the file name (params.meta keeps what was entered): %s', strjoin(changed, '; '));
 end
 end
 

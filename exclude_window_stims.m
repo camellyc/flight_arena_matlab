@@ -17,7 +17,7 @@ function [led_on_indices, nRemoved, windowRanges] = exclude_window_stims(led_on_
 %     led_on_indices : sample indices into Data (vector), e.g. from the LED-on
 %                      detection loop in summarize_*.m
 %     matFile        : path to the session .mat file
-%     fs             : sample rate in Hz (variables.SampleRate)
+%     fs             : sample rate in Hz (params.acq.SampleRate)
 %     margin_s       : optional tolerance around each window, default 0.05 s
 %   Outputs
 %     led_on_indices : filtered indices (same orientation as the input)

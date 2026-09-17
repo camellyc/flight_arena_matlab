@@ -609,9 +609,9 @@ end
 
 function items = flatten(s, prefix)
 % Rows for one settings section: its plain settings in file order, then a heading for
-% each nested struct (basler.top, plotting.ch, ...) followed by that struct's rows.
+% each nested struct (basler.top, basler.h264, ...) followed by that struct's rows.
 % Nested structs go last so that no plain setting is ever listed under a heading
-% (plotting.ch sits mid-section in the file, with plain settings after it).
+% should one sit mid-section in the file with plain settings after it.
 items  = struct('heading', {}, 'name', {}, 'path', {}, 'value', {});
 nested = items;
 f = fieldnames(s);

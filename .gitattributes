@@ -1,0 +1,23 @@
+# Git stores every text file with LF. Working copies are checked out with LF too,
+# whichever platform: MATLAB reads both endings, and this keeps run_session_gui's
+# in-place rewrite of session_defaults.m and the diffs between rigs free of
+# line-ending noise. (The MATLAB editor on Windows saves CRLF; git normalises it.)
+*           text=auto
+*.m         text eol=lf
+*.md        text eol=lf
+*.txt       text eol=lf
+*.py        text eol=lf
+*.ipynb     text eol=lf
+*.svg       text eol=lf
+.gitattributes text eol=lf
+.gitignore  text eol=lf
+
+# Binary
+*.docx      binary
+*.xlsx      binary
+*.png       binary
+*.mat       binary
+*.mp4       binary
+*.avi       binary
+*.cine      binary
+*.tif       binary

@@ -48,8 +48,6 @@ function h = session_overview(matFile, channels, opts)
 % Author: Yichen Luo, 2026-09
 
 %% ======================= USER SETTINGS ==================================
-dataFolder = ['H:\.shortcut-targets-by-id\10pxdlRXtzFB-abwDGi0jOGOFFNm3pmFK\Tuthill Lab Shared\Yichen\', ...
-              'Spiracle\Flight_Arena_Data\'];
 default_channels = {'LED_driver', 'WBF', {'WBA_left', 'WBA_right'}, 'EMG', {'arena_x', 'arena_y'}, ...
                     'basler_trigger', 'phantom_recording'};
 default_opts = struct('time_axis', 'global', 'xlim', [], 'decimate', 1, 'show_stims', true, ...
@@ -59,7 +57,9 @@ default_opts = struct('time_axis', 'global', 'xlim', [], 'decimate', 1, 'show_st
 %% ===================== END USER SETTINGS ================================
 
 if nargin < 1 || isempty(matFile)
-    [f, p] = uigetfile('*.mat', 'Select a session .mat file', dataFolder);
+    try, D = session_defaults(); startDir = D.saveFolder; catch, startDir = pwd; end   % where the rig saves
+    if ~isfolder(startDir), startDir = pwd; end
+    [f, p] = uigetfile('*.mat', 'Select a session .mat file', startDir);
     if isequal(f, 0), h = []; return; end
     matFile = fullfile(p, f);
 end
@@ -81,10 +81,18 @@ nRows = size(Data, 1);
 hasParams = isfield(S, 'params');
 [~, fileTitle] = fileparts(matFile);
 
-if isfield(S, 'variables') && isfield(S.variables, 'SampleRate'), fs = S.variables.SampleRate;
-else, fs = 1 / median(diff(Data(1, 1:min(end, 1000)))); end
-TrialLength = [];
-if isfield(S, 'variables') && isfield(S.variables, 'TrialLength'), TrialLength = S.variables.TrialLength; end
+% Sample rate and block length: params.acq (unified files), the variables struct
+% (files before 2026-09-17 and legacy scripts), or the time base itself.
+fs = []; TrialLength = [];
+if hasParams && isfield(S.params, 'acq')
+    if isfield(S.params.acq, 'SampleRate'),  fs          = S.params.acq.SampleRate;  end
+    if isfield(S.params.acq, 'TrialLength'), TrialLength = S.params.acq.TrialLength; end
+end
+if isempty(fs) && isfield(S, 'variables') && isfield(S.variables, 'SampleRate'), fs = S.variables.SampleRate; end
+if isempty(fs), fs = 1 / median(diff(Data(1, 1:min(end, 1000)))); end
+if isempty(TrialLength) && isfield(S, 'variables') && isfield(S.variables, 'TrialLength')
+    TrialLength = S.variables.TrialLength;
+end
 
 % Row names: params.data_rows for unified files, historical layout otherwise.
 rowNames = arrayfun(@(k) sprintf('row%d', k), 1:nRows, 'UniformOutput', false);
