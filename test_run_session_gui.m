@@ -21,11 +21,20 @@ end
 
 function testEverySettingHasOneControl(testCase)
 % The window is generated from the settings struct: every setting in session_defaults.m
-% must be editable, none dropped or doubled, with no GUI edit when one is added.
+% that is not deliberately hidden must be editable, none dropped or doubled, with no
+% GUI edit when one is added. phantom.window_s is the one setting shown as two boxes.
 fig = run_session_gui();
+hidden = getappdata(fig, 'hiddenSettings');
 paths = leafPaths(run_session_unified('defaults'));
 for i = 1:numel(paths)
-    verifyNumElements(testCase, findall(fig, 'Tag', paths{i}), 1, paths{i});
+    if isHidden(paths{i}, hidden)
+        verifyEmpty(testCase, findall(fig, 'Tag', paths{i}), [paths{i} ' is hidden and must not be shown.']);
+    elseif strcmp(paths{i}, 'phantom.window_s')
+        verifyNumElements(testCase, findall(fig, 'Tag', 'phantom.window_s:start'), 1);
+        verifyNumElements(testCase, findall(fig, 'Tag', 'phantom.window_s:end'), 1);
+    else
+        verifyNumElements(testCase, findall(fig, 'Tag', paths{i}), 1, paths{i});
+    end
 end
 end
 
@@ -37,7 +46,8 @@ verifyEqual(testCase, val(fig, 'meta.experiment_name'), S.meta.experiment_name);
 verifyEqual(testCase, val(fig, 'hw.simulate'), S.hw.simulate);
 verifyEqual(testCase, str2num(val(fig, 'opto.stimDurations')), S.opto.stimDurations); %#ok<ST2NM>
 verifyEqual(testCase, str2num(val(fig, 'basler.side.gain')), S.basler.side.gain);     %#ok<ST2NM>
-verifyEqual(testCase, strtrim(strsplit(val(fig, 'acq.ai_names'), ',')), S.acq.ai_names);
+verifyEqual(testCase, str2num(val(fig, 'phantom.window_s:start')), S.phantom.window_s(1)); %#ok<ST2NM>
+verifyEqual(testCase, str2num(val(fig, 'phantom.window_s:end')), S.phantom.window_s(2));   %#ok<ST2NM>
 end
 
 function testControlTypeFollowsTheDefault(testCase)
@@ -135,8 +145,8 @@ for t = findall(fig, 'Type', 'uitab')'
         end
     end
 end
-verifyEqual(testCase, nHeadings, nestedCount(run_session_unified('defaults'), 0), ...
-    'Every nested settings struct must have exactly one heading.');
+verifyEqual(testCase, nHeadings, nestedCount(run_session_unified('defaults'), 0, '', getappdata(fig, 'hiddenSettings')), ...
+    'Every nested settings struct that is shown must have exactly one heading.');
 end
 
 %% ---- editing: changed and invalid fields -------------------------------
@@ -168,6 +178,7 @@ function testUnreadableNumberIsFlagged(testCase)
 % 'pi' is valid MATLAB that yields a number: it must still be refused, because an
 % entry is only ever read as numeric syntax, never run as code.
 fig = run_session_gui();
+freeStimDurations(fig);
 for bad = {'3000 abc', '[0 3000', 'disp(1)', 'pi'}
     setField(fig, 'opto.stimDurations', bad{1});
     verifyTrue(testCase, isFlagged(fig, 'opto.stimDurations'), sprintf('"%s" must be flagged.', bad{1}));
@@ -189,6 +200,7 @@ function testListSettingMayBeEmptied(testCase)
 S = run_session_unified('defaults');
 assumeFalse(testCase, isscalar(S.opto.stimDurations), 'opto.stimDurations is no longer a list.');
 fig = run_session_gui();
+freeStimDurations(fig);
 setField(fig, 'opto.stimDurations', '');
 verifyFalse(testCase, isFlagged(fig, 'opto.stimDurations'));
 end
@@ -197,6 +209,7 @@ function testResetRestoresTheFileDefaults(testCase)
 S = run_session_unified('defaults');
 fig = run_session_gui();
 setField(fig, 'meta.flyNumber', [S.meta.flyNumber 'x']);
+freeStimDurations(fig);
 setField(fig, 'opto.stimDurations', 'abc');
 click(fig, 'resetButton');
 verifyEqual(testCase, val(fig, 'meta.flyNumber'), S.meta.flyNumber);
@@ -205,10 +218,171 @@ verifyFalse(testCase, isMarkedChanged(fig, 'meta.flyNumber'));
 verifyFalse(testCase, isFlagged(fig, 'opto.stimDurations'));
 end
 
+%% ---- layout and greying rules --------------------------------------------
+
+function testTabsFollowTheLabOrder(testCase)
+% Meta, Opto, Phantom, Basler, Visual, Hardware, Plotting. Acquisition has nothing
+% left to show (TrialLength is on Meta, the rest hidden), so it has no tab.
+fig = run_session_gui();
+tg = findall(fig, 'Type', 'uitabgroup');
+titles = regexprep({tg.Children.Title}, ' \d+$', '');   % "Basler 2" where tabs cannot scroll
+titles = titles([true, ~strcmp(titles(2:end), titles(1:end - 1))]);
+verifyEqual(testCase, titles, {'Meta', 'Opto', 'Phantom', 'Basler', 'Visual', 'Hardware', 'Plotting'});
+end
+
+function testTrialLengthIsShownOnTheMetaTab(testCase)
+fig = run_session_gui();
+tab = ancestor(ctrl(fig, 'acq.TrialLength'), 'uitab');
+verifyEqual(testCase, tab.Title, 'Meta');
+end
+
+function testHiddenSettingsKeepTheFileValue(testCase)
+S = run_session_unified('defaults');
+fig = simulatedGui(testCase, 4);
+verifyEmpty(testCase, findall(fig, 'Tag', 'acq.ai_names'));
+verifyEmpty(testCase, findall(fig, 'Tag', 'visual.rest.pattern_id'));
+click(fig, 'runButton');
+params = savedParams(testCase);
+verifyEqual(testCase, params.acq.ai_names, S.acq.ai_names);
+verifyEqual(testCase, params.visual.rest, S.visual.rest);
+end
+
+function testAutoTrialNumberGreysOutTrialNum(testCase)
+fig = run_session_gui();
+setField(fig, 'meta.auto_trial_number', true);
+verifyFalse(testCase, isEnabled(fig, 'meta.trialNum'));
+setField(fig, 'meta.auto_trial_number', false);
+verifyTrue(testCase, isEnabled(fig, 'meta.trialNum'));
+end
+
+function testPresetRegimeFixesStimDurations(testCase)
+P = session_presets();
+fig = run_session_gui();
+setField(fig, 'opto.mode', 'randomized');
+for k = 1:size(P.stimulus_regime, 1)
+    setField(fig, 'meta.stimulus_regime', P.stimulus_regime{k, 1});
+    verifyEqual(testCase, str2num(val(fig, 'opto.stimDurations')), P.stimulus_regime{k, 2}, P.stimulus_regime{k, 1}); %#ok<ST2NM>
+    verifyFalse(testCase, isEnabled(fig, 'opto.stimDurations'), P.stimulus_regime{k, 1});
+    verifyFalse(testCase, isEnabled(fig, 'meta.stimulus_regime:other'), 'The name box is for "user defined" only.');
+end
+freeStimDurations(fig);
+verifyTrue(testCase, isEnabled(fig, 'opto.stimDurations'));
+verifyTrue(testCase, isEnabled(fig, 'meta.stimulus_regime:other'));
+end
+
+function testUserDefinedRegimeIsNamedAndSent(testCase)
+fig = simulatedGui(testCase, 4);
+freeStimDurations(fig);
+setField(fig, 'meta.stimulus_regime:other', 'myRegime');
+setField(fig, 'opto.stimDurations', '[0 500]');
+click(fig, 'runButton');
+params = savedParams(testCase);
+verifyEqual(testCase, params.meta.stimulus_regime, 'myRegime');
+verifyEqual(testCase, params.opto.stimDurations, [0 500]);
+verifySubstring(testCase, params.baseFileName, '_myRegime');
+end
+
+function testVisualStimTypeFixesModeAndPattern(testCase)
+P = session_presets();
+fig = run_session_gui();
+for k = 1:size(P.visual_stim_type, 1)
+    setField(fig, 'meta.visual_stim_type', P.visual_stim_type{k, 1});
+    verifyEqual(testCase, val(fig, 'visual.mode'), P.visual_stim_type{k, 2});
+    if ~isempty(P.visual_stim_type{k, 3})
+        verifyEqual(testCase, str2double(val(fig, 'visual.pattern_id')), P.visual_stim_type{k, 3});
+    end
+    verifyFalse(testCase, isEnabled(fig, 'visual.mode'));
+    verifyFalse(testCase, isEnabled(fig, 'visual.pattern_id'));
+end
+setField(fig, 'meta.visual_stim_type', 'closed_X');
+verifyTrue(testCase, isEnabled(fig, 'visual.x_pos'));
+verifyFalse(testCase, isEnabled(fig, 'visual.y_gain'), 'Y gain is for the oscillating mode only.');
+setField(fig, 'meta.visual_stim_type', 'closed_X_open_Y');
+verifyFalse(testCase, isEnabled(fig, 'visual.x_pos'));
+verifyTrue(testCase, isEnabled(fig, 'visual.y_gain'));
+end
+
+function testOptoModeGreysOutUnusedFields(testCase)
+fig = run_session_gui();
+freeStimDurations(fig);
+rand = {'opto.stimDurations', 'opto.randomize'};
+win  = {'opto.windows_s', 'opto.windows_amplitude_V'};
+cases = {'randomized', true, false; 'windows', false, true; 'both', true, true; 'none', false, false};
+for k = 1:size(cases, 1)
+    setField(fig, 'opto.mode', cases{k, 1});
+    for p = rand, verifyEqual(testCase, isEnabled(fig, p{1}), cases{k, 2}, [cases{k, 1} ': ' p{1}]); end
+    for p = win,  verifyEqual(testCase, isEnabled(fig, p{1}), cases{k, 3}, [cases{k, 1} ': ' p{1}]); end
+end
+verifyFalse(testCase, isEnabled(fig, 'opto.amplitude_V'), 'Nothing but the mode is used with opto off.');
+verifyTrue(testCase, isEnabled(fig, 'opto.mode'));
+end
+
+function testPhantomWindowIsTwoBoxes(testCase)
+fig = simulatedGui(testCase, 4);
+setField(fig, 'phantom.window_s:start', '1');
+setField(fig, 'phantom.window_s:end', '3');
+verifyTrue(testCase, isMarkedChanged(fig, 'phantom.window_s:start'));
+setField(fig, 'phantom.window_s:end', 'x');
+verifyTrue(testCase, isFlagged(fig, 'phantom.window_s:end'));
+verifyFalse(testCase, isFlagged(fig, 'phantom.window_s:start'));
+setField(fig, 'phantom.window_s:end', '3');
+b = ctrl(fig, 'runButton'); %#ok<NASGU> -- used inside the evalc string
+txt = evalc('b.ButtonPushedFcn(b, [])');
+verifySubstring(testCase, txt, 'phantom.window_s = [1 3]');
+verifyEqual(testCase, getfield(savedVar(testCase, 'phantom'), 'window_s'), [1 3]); %#ok<GFLD>
+end
+
+function testPhantomFieldsGreyOutWhenUnused(testCase)
+fig = run_session_gui();
+setField(fig, 'phantom.enable', true);
+setField(fig, 'phantom.mode', 'framesync');
+verifyFalse(testCase, isEnabled(fig, 'phantom.trigger_at'));
+verifyTrue(testCase, isEnabled(fig, 'phantom.window_s:start'));
+setField(fig, 'phantom.mode', 'fixed_fps');
+verifyTrue(testCase, isEnabled(fig, 'phantom.trigger_at'));
+setField(fig, 'phantom.enable', false);
+verifyFalse(testCase, isEnabled(fig, 'phantom.window_s:end'));
+verifyFalse(testCase, isEnabled(fig, 'phantom.mode'));
+verifyTrue(testCase, isEnabled(fig, 'phantom.enable'));
+end
+
+function testCarbonDioxideIsATickBox(testCase)
+fig = simulatedGui(testCase, 4);
+verifyClass(testCase, ctrl(fig, 'meta.carbon_dioxide'), 'matlab.ui.control.CheckBox');
+setField(fig, 'meta.carbon_dioxide', true);
+click(fig, 'runButton');
+params = savedParams(testCase);
+verifyEqual(testCase, params.meta.carbon_dioxide, 'ON');
+end
+
+function testPositionOtherTakesTheTypedValue(testCase)
+fig = simulatedGui(testCase, 4);
+setField(fig, 'meta.stimulus_position', 'head');
+verifyFalse(testCase, isEnabled(fig, 'meta.stimulus_position:other'));
+setField(fig, 'meta.stimulus_position', 'other...');
+setField(fig, 'meta.stimulus_position:other', 'leg');
+setField(fig, 'meta.phantom_position', 'other...');
+setField(fig, 'meta.phantom_position:other', '');
+click(fig, 'runButton');
+params = savedParams(testCase);
+verifyEqual(testCase, params.meta.stimulus_position, 'leg');
+verifyEmpty(testCase, params.meta.phantom_position);
+end
+
+function testGreyingIsRestoredAfterARun(testCase)
+% The lock during a run switches everything off; afterwards the rules apply again.
+fig = simulatedGui(testCase, 4);
+setField(fig, 'meta.auto_trial_number', true);
+click(fig, 'runButton');
+verifyFalse(testCase, isEnabled(fig, 'meta.trialNum'));
+verifyTrue(testCase, isEnabled(fig, 'meta.flyNumber'));
+end
+
 %% ---- Run ---------------------------------------------------------------
 
 function testRunRefusesInvalidSettings(testCase)
 fig = simulatedGui(testCase, 4);
+freeStimDurations(fig);
 setField(fig, 'opto.stimDurations', 'abc');
 click(fig, 'runButton');
 verifyEmpty(testCase, dir(fullfile(testCase.TestData.dir, '*.mat')), 'No session may start.');
@@ -219,6 +393,7 @@ function testRunSendsTheEditsToTheSession(testCase)
 % Text, number, list, checkbox: each must reach the run with the type of its default.
 fig = simulatedGui(testCase, 4);
 setField(fig, 'meta.flyNumber', '7');
+freeStimDurations(fig);
 setField(fig, 'opto.stimDurations', '[500 1000]');
 click(fig, 'runButton');
 params = savedParams(testCase);
@@ -312,6 +487,7 @@ file = tempSettingsFile(testCase);
 S = run_session_unified('defaults');
 fig = run_session_gui();
 setappdata(fig, 'skipConfirm', true);
+freeStimDurations(fig);
 want = {'meta.flyNumber',     [S.meta.flyNumber '7']
         'hw.simulate',        ~S.hw.simulate
         'opto.mode',          otherItem(ctrl(fig, 'opto.mode'))
@@ -371,6 +547,7 @@ before = fileread(file);
 fig = run_session_gui();
 setappdata(fig, 'skipConfirm', true);
 setField(fig, 'meta.flyNumber', '9');
+freeStimDurations(fig);
 setField(fig, 'opto.stimDurations', 'abc');
 click(fig, 'saveDefaultsButton');
 verifyEqual(testCase, fileread(file), before, 'Nothing may be written while an entry is invalid.');
@@ -431,7 +608,6 @@ setField(fig, 'saveFolder', testCase.TestData.dir);
 setField(fig, 'hw.simulate', true);
 setField(fig, 'hw.sim_speed', '10');
 setField(fig, 'acq.TrialLength', num2str(trialLength));
-setField(fig, 'acq.blocks', '1');
 setField(fig, 'opto.mode', 'none');
 setField(fig, 'plotting.enable', false);
 setField(fig, 'meta.auto_trial_number', false);
@@ -487,15 +663,39 @@ others = dd.Items(~strcmp(dd.Items, dd.Value));
 v = others{1};
 end
 
-function n = nestedCount(s, depth)
-% Structs below the section level (basler.top, basler.h264, ...): the ones that get a heading.
+function n = nestedCount(s, depth, prefix, hidden)
+% Structs below the section level (basler.top, basler.h264, ...) that are not hidden:
+% the ones that get a heading.
 n = 0;
 f = fieldnames(s);
 for i = 1:numel(f)
-    if isstruct(s.(f{i}))
-        n = n + (depth >= 1) + nestedCount(s.(f{i}), depth + 1);
+    if isempty(prefix), p = f{i}; else, p = [prefix '.' f{i}]; end
+    if isstruct(s.(f{i})) && ~isHidden(p, hidden)
+        n = n + (depth >= 1) + nestedCount(s.(f{i}), depth + 1, p, hidden);
     end
 end
+end
+
+function tf = isHidden(path, hidden)
+tf = any(strcmp(path, hidden)) || any(startsWith(path, strcat(hidden, '.')));
+end
+
+function freeStimDurations(fig)
+% A preset stimulus regime fixes opto.stimDurations; "user defined" frees it.
+dd = ctrl(fig, 'meta.stimulus_regime');
+setField(fig, 'meta.stimulus_regime', dd.Items{end});
+end
+
+function tf = isEnabled(fig, path)
+c = ctrl(fig, path);
+tf = strcmp(char(c.Enable), 'on');
+end
+
+function v = savedVar(testCase, name)
+f = dir(fullfile(testCase.TestData.dir, '*.mat'));
+assert(isscalar(f), 'Expected one session file in the scratch folder, found %d.', numel(f));
+L = load(fullfile(f.folder, f.name), name);
+v = L.(name);
 end
 
 function closeGui()

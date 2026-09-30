@@ -17,18 +17,18 @@ function S = session_defaults()
 % See also RUN_SESSION_UNIFIED, RUN_SESSION_GUI.
 
 %% ======================= USER SETTINGS ==================================
-saveFolder = 'K:\sanjana\dat\Raw\R71F05';
+saveFolder = 'H:\.shortcut-targets-by-id\10pxdlRXtzFB-abwDGi0jOGOFFNm3pmFK\Tuthill Lab Shared\Yichen\Spiracle\Flight_Arena_Data\260925_DNg80';
 
 % --- Fly / experiment metadata (non-empty fields build the file name, in this order) ---
-meta.experiment_name   = 'R71F05_ChR';     % e.g. SpINB_ChR
-meta.genotype          = 'R71F05';  % e.g. IS46338_ChR_4d_F
-meta.flyNumber         = 'ba04';
-meta.trialNum          = '4';
-meta.stimulus_regime   = '2-5ms';                 % e.g. 0-3000ms, 3000msx3, 10000ms
-meta.stimulus_position = 'thorax';
-meta.phantom_position  = '';                      % sp1, sp2, wing, ''
-meta.visual_stim_type  = 'closed loop stripe';
-meta.carbon_dioxide    = 'OFF';
+meta.experiment_name   = 'DNg80_ChR';      % e.g. SpINB_ChR
+meta.genotype          = 'SS56145_ChR';  % e.g. IS46338_ChR_4d_F
+meta.flyNumber         = '1';
+meta.trialNum          = '1';
+meta.stimulus_regime   = '3000msx3';              % 3000msx3 | 10000ms | 0-3000ms | 0-300ms set opto.stimDurations (session_presets.m); any other name = user defined
+meta.stimulus_position = 'thorax';                % thorax | head | anything else
+meta.phantom_position  = 'sp2';                   % sp1 | sp2 | anything else ('' = none)
+meta.visual_stim_type  = 'closed_X';              % closed_X | closed_X_open_Y | none: sets visual.mode and visual.pattern_id (session_presets.m)
+meta.carbon_dioxide    = 'OFF';                   % 'ON' | 'OFF' (a tick box in the GUI)
 meta.auto_trial_number = false;   % true: trialNum = 1 + #existing .mat files for this fly in saveFolder
 meta.notes             = '';
 
@@ -41,7 +41,7 @@ hw.play_sound_at_end = true;
 
 % --- Acquisition ---
 acq.SampleRate      = 10000;   % Hz
-acq.TrialLength     = 30;     % s per block
+acq.TrialLength     = 60;     % s per block
 acq.blocks          = 1;
 acq.ai_channels     = [0:11 14];
 acq.ai_names        = {'LED_driver','WBF','WBA_left','WBA_right','hutchen_left','hutchen_right', ...
@@ -56,8 +56,8 @@ acq.ttl_threshold_V = 1.5;     % V; a TTL loop-back (Basler trigger, Phantom Rec
 %   13 = horizontal stripes + smooth vertical bar, 2 = horizontal stripes.
 % Velocity functions: 4 = sine 0.025 Hz, 5 = sine 0.05 Hz, 6 = sine 0.2 Hz,
 %   8 = sine 1 Hz, 9-14 = square waves (amp1/2/3 at 0.05 / 0.1 Hz).
-visual.mode        = 'closed_loop_stripe';      % 'closed_loop_stripe' | 'closed_loop_oscillating' | 'none'
-visual.pattern_id  = 14;
+visual.mode        = 'closed_loop_stripe';       % set by meta.visual_stim_type when that is one of its presets
+visual.pattern_id  = 14;        % set by meta.visual_stim_type when that is one of its presets
 visual.CL_X_gain   = -5;
 visual.x_pos       = 48;        % start X position (used in stripe mode)
 visual.mode_xy     = [1 0];     % Panel_com set_mode: X closed loop, Y open loop
@@ -71,17 +71,17 @@ visual.rest.x_pos      = 48;
 visual.rest.CL_X_gain  = -5;
 
 % --- Optogenetic LED (AO0) ---
-opto.mode              = 'both';     % 'randomized' | 'windows' | 'both' | 'none'  ('both' = randomized + windows)
+opto.mode              = 'randomized';  % 'randomized' | 'windows' | 'both' | 'none'  ('both' = randomized + windows)
 opto.ao                = 'ao0';
 opto.Frequency         = 200;           % pulse rate (Hz)
-opto.PulseDuration     = 3;             % pulse width (ms); >= 1000/Frequency gives continuous light
-opto.amplitude_V       = 5;             % default LED command voltage
+opto.PulseDuration     = 4.95;          % pulse width (ms); >= 1000/Frequency gives continuous light
+opto.amplitude_V       = 10;            % default LED command voltage
 % randomized mode: durations (ms), evenly spaced at TrialLength/(n+1); 0 = sham
-opto.stimDurations     = [0 2000 5000];
+opto.stimDurations     = [0 3000 3000];  % set by meta.stimulus_regime unless that is user defined
 opto.stimIntensities_V = [];            % [] = amplitude_V for all; else one voltage per duration (paired)
 opto.randomize         = true;          % shuffle order every block
 % windows mode: explicit [onset offset] rows in seconds within the block
-opto.windows_s         = [28 28.5];
+opto.windows_s         = [];
 opto.windows_amplitude_V = [];          % [] = amplitude_V; else one voltage per row
 
 % --- Basler cameras (hardware-triggered by ctr0) ---
@@ -90,6 +90,7 @@ basler.Exposure_time           = 9000;  % us; clamped to 90 % of the frame perio
 basler.trigger_ctr             = 'ctr0';
 basler.trigger_initial_delay_s = 0.05;
 basler.format                  = 'Mono8';
+basler.preview                 = false; % live preview window per camera during the run; draws on MATLAB's main thread (with the DAQ callbacks and live plot), so check for dropped frames on the rig
 % Frames stream to disk during acquisition (LoggingMode = 'disk' + DiskLogger), so
 % nothing is buffered in RAM. The stream is UNCOMPRESSED Grayscale AVI, not a choice:
 % the disk logger hands every frame to a MATLAB VideoWriter on the MATLAB thread, and
@@ -129,12 +130,12 @@ basler.side = struct('enable', true,  'label', 'SideCamera', 'serial', '22843477
                      'rotate_deg', 180, 'exposure_active_out', true,  'line_inverter', 'False');
 
 % --- Phantom KT810 ---
-phantom.enable        = false;
+phantom.enable        = true;
 phantom.mode          = 'framesync';  % 'framesync' | 'fixed_fps' - need to also set Phantom PCC to "external"
 phantom.serial        = 34437;
 phantom.fps           = 100;         % framesync: metadata only (external clock); fixed_fps: set on camera
 phantom.exposure_us   = 150;
-phantom.window_s      = [5 15];      % [capture start, trigger] for framesync / fixed 'end'; [trigger, end] for fixed 'start'
+phantom.window_s      = [10 50];     % [capture start, trigger] for framesync / fixed 'end'; [trigger, end] for fixed 'start'
 phantom.trigger_at    = 'end';        % fixed_fps only: 'end' (pre-trigger buffer) | 'start' (post-trigger frames)
 phantom.pt_frames     = 10;           % fixed_fps + 'end': small post-trigger buffer
 phantom.arm_lead_s    = 0.5;          % start capture / arm this long before window_s(1)

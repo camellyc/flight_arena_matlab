@@ -20,6 +20,9 @@ function out = run_session_unified(overrides)
 %   run_session_gui                     % window for editing session_defaults.m, then Run
 %
 % MODES (all selected in session_defaults.m)
+%   meta.stimulus_regime / meta.visual_stim_type : a preset name from session_presets.m
+%                 fixes opto.stimDurations / visual.mode + pattern_id (applied after
+%                 the overrides); any other name leaves those settings as written
 %   visual.mode : 'closed_loop_stripe'      pattern + closed-loop X gain
 %                 'closed_loop_oscillating' pattern + Y velocity function
 %                 'none'                    arena untouched (immobilised fly)
@@ -82,6 +85,7 @@ if defaultsOnly, out = S; return; end   % the settings file, exactly as override
 S = mergeStruct(S, overrides);
 saveFolder = S.saveFolder; meta = S.meta; hw = S.hw; acq = S.acq; visual = S.visual;
 opto = S.opto; basler = S.basler; phantom = S.phantom; plotting = S.plotting;
+[opto, visual] = applyPresets(meta, opto, visual);   % meta.stimulus_regime / visual_stim_type (session_presets.m)
 nameOf = fileNameParts(meta);   % metadata as file-name tokens: text, with characters Windows refuses replaced
 
 scriptStart = datetime('now', 'TimeZone', 'local');
@@ -424,6 +428,15 @@ if anyCam
     end
     if basler.top.enable,  [vids.top,  srcs.top]  = setupBasler('top',  camInfo, files.top_video_scratch);  teardownState('vids') = vids; end
     if basler.side.enable, [vids.side, srcs.side] = setupBasler('side', camInfo, files.side_video_scratch); teardownState('vids') = vids; end
+    % Live view while the cameras are triggered and logging to disk. Every preview
+    % frame is drawn on MATLAB's main thread, which also runs the DAQ callbacks and
+    % the live plot; overloading that thread dropped frames on 2026-09-15, so compare
+    % baslerInfo.<cam>.dropped_frames with and without it. Deleting the videoinput
+    % at the end closes the window.
+    if basler.preview
+        if ~isempty(vids.top),  preview(vids.top);  end
+        if ~isempty(vids.side), preview(vids.side); end
+    end
 end
 
 %% ---------------- Phantom connect / configure ---------------------------
@@ -720,8 +733,8 @@ if ~isempty(vids.side)
         warning('run_session_unified:videoWrite', '%s: video write failed: %s', basler.side.label, ME.message);
     end
 end
-if ~isempty(vids.top),  delete(vids.top);  vids.top  = []; end   % closes the DiskLogger file
-if ~isempty(vids.side), delete(vids.side); vids.side = []; end
+releaseCamera(vids.top,  basler.top.label);  vids.top  = [];   % also closes the DiskLogger file
+releaseCamera(vids.side, basler.side.label); vids.side = [];
 
 % Compress (ffmpeg, H.264, pending rotation applied) and move the finished videos from
 % the local scratch folder into saveFolder. Done only now, with the cameras released
@@ -1303,8 +1316,7 @@ catch
 end
 for camKey = {'top', 'side'}
     try
-        v = vids.(camKey{1});
-        if ~isempty(v) && isvalid(v), stop(v); delete(v); end
+        releaseCamera(vids.(camKey{1}), camKey{1});
     catch
     end
 end
@@ -1327,6 +1339,50 @@ try
 catch
 end
 closeSessionLog(entry(state, 'log'));   % last, so the lines above are in the log
+end
+
+function releaseCamera(vid, label)
+% Stop a Basler videoinput, hand the camera back in free-run and delete the object.
+% The trigger settings live in the camera, not in MATLAB, and outlast the videoinput:
+% left at TriggerMode = On (FrameStart on Line4), Pylon Viewer's live view waits for
+% ctr0 pulses that no longer come and shows nothing until the camera is power-cycled.
+% Binning, gain, gamma and ReverseX/Y are left as the session set them, so Pylon
+% shows the picture the session recorded.
+if isempty(vid) || ~isvalid(vid), return; end
+try
+    stop(vid);
+catch
+end
+try
+    src = getselectedsource(vid);
+    src.TriggerMode = 'Off';
+catch ME
+    fprintf(2, '%s: could not set TriggerMode Off (%s); set it in Pylon Viewer (Acquisition Control).\n', ...
+            label, ME.message);
+end
+delete(vid);
+end
+
+function [opto, visual] = applyPresets(meta, opto, visual)
+% The settings a preset meta choice fixes (session_presets.m): meta.stimulus_regime
+% sets opto.stimDurations, meta.visual_stim_type sets visual.mode and pattern_id.
+% Other names (a user-defined regime, an older free-text stim type) leave them as
+% written. run_session_gui greys out the fixed settings and fills in the same values.
+P = session_presets();
+hit = strcmp(P.stimulus_regime(:, 1), asText(meta.stimulus_regime));
+if any(hit)
+    d = P.stimulus_regime{hit, 2};
+    if ~isequal(opto.stimDurations, d)
+        fprintf('stimulus_regime %s: opto.stimDurations = %s (was %s)\n', ...
+                meta.stimulus_regime, mat2str(d), mat2str(opto.stimDurations));
+    end
+    opto.stimDurations = d;
+end
+hit = strcmp(P.visual_stim_type(:, 1), asText(meta.visual_stim_type));
+if any(hit)
+    visual.mode = P.visual_stim_type{hit, 2};
+    if ~isempty(P.visual_stim_type{hit, 3}), visual.pattern_id = P.visual_stim_type{hit, 3}; end
+end
 end
 
 function closeSessionLog(log)

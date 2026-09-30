@@ -27,6 +27,17 @@ function varargout = run_session_gui()
 %          before the change is accepted; if any value does not come back as written,
 %          the original file is restored.
 %
+% Not every setting is a plain field:
+%   - The meta choices in session_presets.m are dropdowns. A preset stimulus_regime
+%     fills in opto.stimDurations and greys it out ("user defined..." frees it and
+%     takes the regime name from the box next to it); visual_stim_type does the same
+%     for visual.mode and visual.pattern_id. Positions offer "other..." with a box.
+%   - Settings a choice makes irrelevant are greyed out (trialNum under auto trial
+%     number, the opto fields the opto mode does not use, the Phantom fields when it
+%     is off or in framesync, the visual fields of the other arena mode).
+%   - Some settings are shown on another tab (acq.TrialLength on Meta) or not at all
+%     (HIDDEN below); a hidden setting keeps the value in session_defaults.m.
+%
 % Runs on R2019a and newer. Where grid layouts cannot scroll yet (R2019a, for one),
 % the window is a little wider and long sections continue on extra tabs
 % ("Basler 2", ...) so that every setting stays on screen.
@@ -52,8 +63,28 @@ RESET_W = 150;                    % Reset button width
 RUN_W   = 60;                     % Run button width
 SECTION_TITLES = struct('meta', 'Meta', 'hw', 'Hardware', 'acq', 'Acquisition', 'visual', 'Visual', ...
                         'opto', 'Opto', 'basler', 'Basler', 'phantom', 'Phantom', 'plotting', 'Plotting');
+TAB_ORDER = {'meta', 'opto', 'phantom', 'basler', 'visual', 'acq', 'hw', 'plotting'};   % others follow
+% Not shown: these keep the value in session_defaults.m. A struct hides all it holds.
+HIDDEN = {'acq.SampleRate', 'acq.blocks', 'acq.ai_channels', 'acq.ai_names', 'acq.terminal_config', ...
+          'acq.notify_period_s', 'acq.ttl_threshold_V', 'visual.mode_xy', 'visual.funcy_freq', 'visual.rest'};
+% Shown away from their place in the file: {setting, tab, after this setting ('' = first)}.
+MOVES = {'meta.auto_trial_number', 'meta',    'meta.flyNumber'
+         'acq.TrialLength',        'meta',    'meta.trialNum'
+         'phantom.window_s',       'phantom', 'phantom.mode'};
+LABELS = {'acq.TrialLength', 'trial length (s)'};   % label other than the field name
+PAIRS  = {'phantom.window_s', {'window start (s)', 'window end (s)'}};   % [a b] as two boxes
+PAIR_TAGS = {'start', 'end'};                       % control tags <path>:start, <path>:end
+ONOFF  = {'meta.carbon_dioxide'};                   % 'ON' / 'OFF' as a tick box
+PRESETS = session_presets();
+OTHER        = 'other...';
+USER_DEFINED = 'user defined...';
+% A dropdown whose last item frees a text box (tag <path>:other) for any other value.
+CHOICE_OTHER = {'meta.stimulus_regime',   [PRESETS.stimulus_regime(:, 1)', {USER_DEFINED}]
+                'meta.stimulus_position', [PRESETS.stimulus_position, {OTHER}]
+                'meta.phantom_position',  [PRESETS.phantom_position, {OTHER}]};
 % Settings with a fixed set of values, as validated by run_session_unified.
-CHOICES = {'visual.mode',               {'closed_loop_stripe', 'closed_loop_oscillating', 'none'}
+CHOICES = {'meta.visual_stim_type',     PRESETS.visual_stim_type(:, 1)'
+           'visual.mode',               {'closed_loop_stripe', 'closed_loop_oscillating', 'none'}
            'opto.mode',                 {'randomized', 'windows', 'both', 'none'}
            'phantom.mode',              {'framesync', 'fixed_fps'}
            'phantom.trigger_at',        {'end', 'start'}
@@ -103,8 +134,10 @@ running = false;   % a session started from this window is in progress
 
 % One entry per editable setting. fg / bg / labelFg are the colours the controls were
 % created with, restored when a flag or mark is cleared (so a dark theme survives).
+% ctrl2 / label2: the second box of a pair, or the "other" text box of a dropdown.
 fields = struct('path', {}, 'kind', {}, 'default', {}, 'ctrl', {}, 'label', {}, ...
-                'fg', {}, 'bg', {}, 'labelFg', {});
+                'fg', {}, 'bg', {}, 'labelFg', {}, 'ctrl2', {}, 'label2', {});
+setappdata(fig, 'hiddenSettings', HIDDEN);   % for the tests
 buildForm(run_session_unified('defaults'));
 
 if nargout > 0, varargout{1} = fig; end
@@ -113,7 +146,8 @@ if nargout > 0, varargout{1} = fig; end
 
     function buildForm(S)
         % (Re)create every control from the settings struct S: top-level plain
-        % settings (saveFolder) above the tabs, one tab per settings section.
+        % settings (saveFolder) above the tabs, one tab per settings section in
+        % TAB_ORDER, with HIDDEN left out and MOVES applied.
         tips = settingComments();
         delete(topGrid.Children);
         delete(tabs.Children);
@@ -126,11 +160,20 @@ if nargout > 0, varargout{1} = fig; end
             root.RowHeight{1} = numel(top) * ROW_H + max(0, numel(top) - 1) * topGrid.RowSpacing;
         end
         for i = 1:numel(top)
-            addSetting(topGrid, i, top{i}, top{i}, S.(top{i}), tips);
+            addSetting(topGrid, i, top{i}, top{i}, S.(top{i}), tips, 0);
         end
-        secs = names(isSection);
+        secs = names(isSection)';
+        secs = [TAB_ORDER(ismember(TAB_ORDER, secs)), secs(~ismember(secs, TAB_ORDER))];
+        rows = struct();
         for i = 1:numel(secs)
-            items = flatten(S.(secs{i}), secs{i});
+            rows.(secs{i}) = shownItems(S.(secs{i}), secs{i}, HIDDEN, PAIRS);
+        end
+        for m = 1:size(MOVES, 1)
+            rows = moveItem(rows, MOVES{m, :});
+        end
+        for i = 1:numel(secs)
+            items = rows.(secs{i});
+            if isempty(items), continue; end   % everything in it hidden or moved
             if canScroll, pages = {items}; else, pages = pageItems(items, PAGE_ROWS); end
             for p = 1:numel(pages)
                 tabTitle = sectionTitle(secs{i});
@@ -138,6 +181,7 @@ if nargout > 0, varargout{1} = fig; end
                 addTab(tabTitle, pages{p}, tips);
             end
         end
+        applyRules();
     end
 
     function addTab(tabTitle, items, tips)
@@ -151,41 +195,78 @@ if nargout > 0, varargout{1} = fig; end
                 h = uilabel(g, 'Text', items(r).name, 'FontWeight', 'bold', 'Tag', ['heading:' items(r).path]);
                 h.Layout.Row = r; h.Layout.Column = [1 3];
             else
-                addSetting(g, r, items(r).name, items(r).path, items(r).value, tips);
+                addSetting(g, r, items(r).name, items(r).path, items(r).value, tips, items(r).part);
             end
         end
     end
 
-    function addSetting(g, r, name, path, value, tips)
+    function addSetting(g, r, name, path, value, tips, part)
+        % part: 0 for a whole setting; 1 or 2 for the two boxes of a PAIRS setting.
         lbl = uilabel(g, 'Text', name, 'Tag', ['label:' path]);
         lbl.Layout.Row = r; lbl.Layout.Column = 1;
-        [kind, items] = kindOf(path, value);
-        switch kind
-            case 'logical', c = uicheckbox(g, 'Text', '', 'Value', value);
-            case 'choice',  c = uidropdown(g, 'Items', items, 'Value', value);
-            otherwise,      c = uieditfield(g, 'text', 'Value', toText(kind, value));
+        hit = strcmp(LABELS(:, 1), path);
+        if any(hit) && part == 0, lbl.Text = LABELS{hit, 2}; end
+        c2 = [];
+        if part > 0
+            kind = 'pair';
+            tag  = [path ':' PAIR_TAGS{part}];
+            lbl.Tag = ['label:' tag];
+            if numel(value) >= part, txt = toText('numeric', value(part)); else, txt = ''; end
+            c = uieditfield(g, 'text', 'Value', txt, 'Tag', tag);
+            c.Layout.Row = r; c.Layout.Column = 2;
+        else
+            [kind, items] = kindOf(path, value);
+            switch kind
+                case 'logical', c = uicheckbox(g, 'Text', '', 'Value', value);
+                case 'onoff',   c = uicheckbox(g, 'Text', '', 'Value', strcmpi(value, 'ON'));
+                case 'choice',  c = uidropdown(g, 'Items', items, 'Value', value);
+                case 'choiceOther'
+                    sub = uigridlayout(g, [1 2], 'Padding', [0 0 0 0]);
+                    sub.Layout.Row = r; sub.Layout.Column = [2 3];
+                    if any(strcmp(items(1:end - 1), value)), dv = value; tv = '';
+                    else,                                    dv = items{end}; tv = value;
+                    end
+                    c  = uidropdown(sub, 'Items', items, 'Value', dv);
+                    c2 = uieditfield(sub, 'text', 'Value', tv, 'Tag', [path ':other']);
+                    c2.ValueChangedFcn = @(~, ~) onEdit(path);
+                otherwise,      c = uieditfield(g, 'text', 'Value', toText(kind, value));
+            end
+            if strcmp(kind, 'fixed'), c.Editable = 'off'; end
+            c.Tag = path;
+            if ~strcmp(kind, 'choiceOther'), c.Layout.Row = r; c.Layout.Column = 2; end
         end
-        if strcmp(kind, 'fixed'), c.Editable = 'off'; end
-        c.Tag = path;
-        c.Layout.Row = r; c.Layout.Column = 2;
-        c.ValueChangedFcn = @(~, ~) refreshField(path);
-        if isKey(tips, path), c.Tooltip = tips(path); lbl.Tooltip = tips(path); end
+        c.ValueChangedFcn = @(~, ~) onEdit(path);
+        if isKey(tips, path)
+            c.Tooltip = tips(path); lbl.Tooltip = tips(path);
+            if ~isempty(c2), c2.Tooltip = tips(path); end
+        end
         if any(strcmp(path, FOLDERS))
             b = uibutton(g, 'Text', 'Browse...', 'Tag', ['browse:' path], ...
                          'ButtonPushedFcn', @(~, ~) browse(c, path));
             b.Layout.Row = r; b.Layout.Column = 3;
         end
+        if part == 2   % the second box joins the entry the first one made
+            k = find(strcmp({fields.path}, path), 1);
+            fields(k).ctrl2 = c; fields(k).label2 = lbl;
+            return;
+        end
         fg = []; bg = [];
         if isprop(c, 'FontColor'),       fg = c.FontColor;       end
         if isprop(c, 'BackgroundColor'), bg = c.BackgroundColor; end
         fields(end + 1) = struct('path', path, 'kind', kind, 'default', {value}, 'ctrl', c, 'label', lbl, ...
-                                 'fg', fg, 'bg', bg, 'labelFg', lbl.FontColor);
+                                 'fg', fg, 'bg', bg, 'labelFg', lbl.FontColor, 'ctrl2', c2, 'label2', []);
     end
 
     function [kind, items] = kindOf(path, value)
         items = {};
-        hit = strcmp(CHOICES(:, 1), path);
-        if any(hit) && ischar(value)
+        hit  = strcmp(CHOICES(:, 1), path);
+        hitO = strcmp(CHOICE_OTHER(:, 1), path);
+        if any(hitO) && ischar(value)
+            kind  = 'choiceOther';
+            items = CHOICE_OTHER{hitO, 2};
+        elseif any(strcmp(ONOFF, path)) && ischar(value)
+            kind = 'onoff';
+        elseif any(hit) && ischar(value)
             kind  = 'choice';
             items = CHOICES{hit, 2};
             if ~any(strcmp(items, value)), items = [{value}, items]; end   % keep an unlisted file value
@@ -202,20 +283,117 @@ if nargout > 0, varargout{1} = fig; end
         end
     end
 
+    function onEdit(path)
+        refreshField(path);
+        applyRules();
+    end
+
     function refreshField(path)
         % Mark a setting that differs from the file; flag an entry that cannot be read.
         f = fields(strcmp({fields.path}, path));
         [v, ok] = readField(f);
+        lbls = [f.label, f.label2];
         if ok && ~sameValue(v, f.default)
-            f.label.FontWeight = 'bold';   f.label.FontColor = CHANGED_COLOR;
+            set(lbls, 'FontWeight', 'bold', 'FontColor', CHANGED_COLOR);
         else
-            f.label.FontWeight = 'normal'; f.label.FontColor = f.labelFg;
+            set(lbls, 'FontWeight', 'normal', 'FontColor', f.labelFg);
         end
-        if strcmp(f.kind, 'numeric')
-            if ok, f.ctrl.BackgroundColor = f.bg;        f.ctrl.FontColor = f.fg;
-            else,  f.ctrl.BackgroundColor = BAD_COLOR;   f.ctrl.FontColor = [0 0 0];
+        switch f.kind
+            case 'numeric'
+                flagBox(f, f.ctrl, ok);
+            case 'pair'
+                [~, ok1] = readPart(f.ctrl,  f.default);
+                [~, ok2] = readPart(f.ctrl2, f.default);
+                flagBox(f, f.ctrl, ok1);
+                flagBox(f, f.ctrl2, ok2);
+        end
+    end
+
+    function flagBox(f, c, ok)
+        if ok, c.BackgroundColor = f.bg;        c.FontColor = f.fg;
+        else,  c.BackgroundColor = BAD_COLOR;   c.FontColor = [0 0 0];
+        end
+    end
+
+    function applyRules()
+        % Grey out the settings the current choices make irrelevant, and fill in the
+        % ones a preset fixes (the same values run_session_unified applies).
+        if running || isempty(fields) || ~isvalid(fig), return; end
+        paths = {fields.path};
+        en = true(1, numel(fields));
+        if isequal(valueOf('meta.auto_trial_number'), true), off('meta.trialNum'); end
+
+        hit = strcmp(PRESETS.stimulus_regime(:, 1), valueOf('meta.stimulus_regime'));
+        if any(hit)
+            show('opto.stimDurations', PRESETS.stimulus_regime{hit, 2});
+            off('opto.stimDurations');
+        end
+
+        hit = strcmp(PRESETS.visual_stim_type(:, 1), valueOf('meta.visual_stim_type'));
+        if any(hit)
+            show('visual.mode', PRESETS.visual_stim_type{hit, 2});
+            if ~isempty(PRESETS.visual_stim_type{hit, 3})
+                show('visual.pattern_id', PRESETS.visual_stim_type{hit, 3});
             end
+            off('visual.mode'); off('visual.pattern_id');
         end
+        switch char(valueOf('visual.mode'))
+            case 'closed_loop_stripe',      off('visual.velfunc_id'); off('visual.y_gain'); off('visual.y_bias');
+            case 'closed_loop_oscillating', off('visual.x_pos');
+            case 'none',                    offUnder('visual', '');
+        end
+
+        om = valueOf('opto.mode');
+        if ~any(strcmp(om, {'randomized', 'both'}))
+            off('opto.stimDurations'); off('opto.stimIntensities_V'); off('opto.randomize');
+        end
+        if ~any(strcmp(om, {'windows', 'both'}))
+            off('opto.windows_s'); off('opto.windows_amplitude_V');
+        end
+        if strcmp(om, 'none'), offUnder('opto', 'opto.mode'); end
+
+        if isequal(valueOf('phantom.enable'), false), offUnder('phantom', 'phantom.enable'); end
+        if strcmp(valueOf('phantom.mode'), 'framesync')          % triggers at the window end
+            off('phantom.trigger_at'); off('phantom.pt_frames');
+        elseif strcmp(valueOf('phantom.trigger_at'), 'start')    % pt_frames is the 'end' buffer
+            off('phantom.pt_frames');
+        end
+
+        for k = 1:numel(fields), setEnabled(fields(k), en(k)); end
+
+        function off(path)
+            en(strcmp(paths, path)) = false;
+        end
+        function offUnder(section, except)
+            en(startsWith(paths, [section '.']) & ~strcmp(paths, except)) = false;
+        end
+    end
+
+    function v = valueOf(path)
+        % The value a setting has in the window now ([] if the file has no such setting).
+        k = find(strcmp({fields.path}, path), 1);
+        if isempty(k), v = []; else, v = readField(fields(k)); end
+    end
+
+    function show(path, v)
+        % Put the value a preset fixes into its control.
+        k = find(strcmp({fields.path}, path), 1);
+        if isempty(k), return; end
+        c = fields(k).ctrl;
+        switch fields(k).kind
+            case 'numeric', txt = toText('numeric', v);
+            case 'choice',  txt = v; if ~any(strcmp(c.Items, v)), return; end
+            otherwise,      return;
+        end
+        if ~strcmp(c.Value, txt), c.Value = txt; refreshField(path); end
+    end
+
+    function setEnabled(f, tf)
+        if tf, e = 'on'; else, e = 'off'; end
+        f.ctrl.Enable = e;
+        if isempty(f.ctrl2), return; end
+        if strcmp(f.kind, 'choiceOther') && tf && ~strcmp(f.ctrl.Value, f.ctrl.Items{end}), e = 'off'; end
+        f.ctrl2.Enable = e;
     end
 
     function [ov, changed, bad] = collectOverrides()
@@ -268,12 +446,14 @@ if nargout > 0, varargout{1} = fig; end
     end
 
     function setRunning(tf)
-        % Lock every control (Run and Reset included) while a session runs.
+        % Lock every control (Run and Reset included) while a session runs; afterwards
+        % the greying rules decide again what is enabled.
         running = tf;
         if ~isvalid(fig), return; end
         if tf, e = 'off'; else, e = 'on'; end
-        for k = 1:numel(fields), fields(k).ctrl.Enable = e; end
+        for k = 1:numel(fields), setEnabled(fields(k), ~tf); end
         set(findall(fig, 'Type', 'uibutton'), 'Enable', e);
+        applyRules();
     end
 
     function setStatus(text, isError)
@@ -401,8 +581,23 @@ switch f.kind
     case 'numeric', [v, ok] = parseNumber(f.ctrl.Value, f.default);
     case 'cellstr', v = parseList(f.ctrl.Value, f.default);
     case 'fixed',   v = f.default;
+    case 'onoff'
+        if f.ctrl.Value, v = 'ON'; else, v = 'OFF'; end
+        if strcmpi(v, f.default), v = f.default; end       % 'off' in the file is not a change
+    case 'choiceOther'                                     % the last item frees the text box
+        if strcmp(f.ctrl.Value, f.ctrl.Items{end}), v = strtrim(f.ctrl2.Value); else, v = f.ctrl.Value; end
+    case 'pair'
+        [a, ok1] = readPart(f.ctrl,  f.default);
+        [b, ok2] = readPart(f.ctrl2, f.default);
+        ok = ok1 && ok2;
+        if ok, v = [a b]; else, v = []; end
     otherwise,      v = f.ctrl.Value;
 end
+end
+
+function [v, ok] = readPart(c, default)
+% One box of a pair: a single number of the class of the pair's file default.
+[v, ok] = parseNumber(c.Value, cast(0, class(default)));
 end
 
 function [v, ok] = parseNumber(txt, default)
@@ -607,22 +802,60 @@ c = onCleanup(@() fclose(fid));
 fprintf(fid, '%s', txt);
 end
 
+function items = shownItems(s, prefix, hidden, pairs)
+% The rows of one settings section as the window shows them: HIDDEN settings (and
+% everything inside a hidden struct) left out, and a PAIRS setting as two rows.
+items = flatten(s, prefix);
+keep = true(1, numel(items));
+for k = 1:numel(items)
+    keep(k) = ~any(strcmp(items(k).path, hidden) | startsWith(items(k).path, strcat(hidden, '.')));
+end
+items = items(keep);
+for k = numel(items):-1:1
+    hit = strcmp(pairs(:, 1), items(k).path);
+    if ~any(hit) || items(k).heading, continue; end
+    two = [items(k), items(k)];
+    two(1).name = pairs{hit, 2}{1}; two(1).part = 1;
+    two(2).name = pairs{hit, 2}{2}; two(2).part = 2;
+    items = [items(1:k - 1), two, items(k + 1:end)];
+end
+end
+
+function rows = moveItem(rows, path, toSec, after)
+% Move the row(s) of setting path from its section to section toSec, after the row
+% of setting after ('' = first). Nothing happens if either is not shown.
+fromSec = strtok(path, '.');
+if ~isfield(rows, fromSec) || ~isfield(rows, toSec), return; end
+take = strcmp({rows.(fromSec).path}, path);
+if ~any(take), return; end
+moved = rows.(fromSec)(take);
+rows.(fromSec) = rows.(fromSec)(~take);
+dest = rows.(toSec);
+if isempty(after)
+    at = 0;
+else
+    at = find(strcmp({dest.path}, after), 1, 'last');
+    if isempty(at), at = numel(dest); end
+end
+rows.(toSec) = [dest(1:at), moved, dest(at + 1:end)];
+end
+
 function items = flatten(s, prefix)
 % Rows for one settings section: its plain settings in file order, then a heading for
 % each nested struct (basler.top, basler.h264, ...) followed by that struct's rows.
 % Nested structs go last so that no plain setting is ever listed under a heading
 % should one sit mid-section in the file with plain settings after it.
-items  = struct('heading', {}, 'name', {}, 'path', {}, 'value', {});
+items  = struct('heading', {}, 'name', {}, 'path', {}, 'value', {}, 'part', {});
 nested = items;
 f = fieldnames(s);
 for k = 1:numel(f)
     p = [prefix '.' f{k}];
     v = s.(f{k});
     if isstruct(v) && isscalar(v)
-        nested(end + 1) = struct('heading', true, 'name', p(find(p == '.', 1) + 1:end), 'path', p, 'value', []); %#ok<AGROW>
+        nested(end + 1) = struct('heading', true, 'name', p(find(p == '.', 1) + 1:end), 'path', p, 'value', [], 'part', 0); %#ok<AGROW>
         nested = [nested, flatten(v, p)]; %#ok<AGROW>
     else
-        items(end + 1) = struct('heading', false, 'name', f{k}, 'path', p, 'value', {v}); %#ok<AGROW>
+        items(end + 1) = struct('heading', false, 'name', f{k}, 'path', p, 'value', {v}, 'part', 0); %#ok<AGROW>
     end
 end
 items = [items, nested];

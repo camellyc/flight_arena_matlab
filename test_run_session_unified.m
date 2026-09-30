@@ -40,6 +40,46 @@ verifyEmpty(testCase, regexp(fileread(which('run_session_unified')), marker, 'on
     'run_session_unified.m must not carry a settings block of its own.');
 end
 
+%% ---- presets (session_presets.m) --------------------------------------------
+
+function testPresetRegimeSetsStimDurations(testCase)
+% A preset name wins over whatever opto.stimDurations says, from the command line too.
+ov = simulatedSession(testCase);
+ov.meta = struct('stimulus_regime', '0-300ms');
+ov.opto.stimDurations = [1 2];
+out = run_session_unified(ov);
+verifyEqual(testCase, out.params.opto.stimDurations, [0 10 30 100 300]);
+end
+
+function testUserDefinedRegimeKeepsStimDurations(testCase)
+ov = simulatedSession(testCase);
+ov.meta = struct('stimulus_regime', 'custom');
+ov.opto.stimDurations = [0 750];
+out = run_session_unified(ov);
+verifyEqual(testCase, out.params.opto.stimDurations, [0 750]);
+end
+
+function testVisualStimTypeSetsModeAndPattern(testCase)
+ov = simulatedSession(testCase);
+ov.meta = struct('visual_stim_type', 'closed_X_open_Y');
+out = run_session_unified(ov);
+verifyEqual(testCase, out.params.visual.mode, 'closed_loop_oscillating');
+verifyEqual(testCase, out.params.visual.pattern_id, 13);
+end
+
+function testFileDefaultsAgreeWithTheirPresets(testCase)
+% A file whose preset and fixed values disagree would open the GUI already "changed".
+S = session_defaults();
+P = session_presets();
+hit = strcmp(P.stimulus_regime(:, 1), S.meta.stimulus_regime);
+if any(hit), verifyEqual(testCase, S.opto.stimDurations, P.stimulus_regime{hit, 2}); end
+hit = strcmp(P.visual_stim_type(:, 1), S.meta.visual_stim_type);
+if any(hit)
+    verifyEqual(testCase, S.visual.mode, P.visual_stim_type{hit, 2});
+    if ~isempty(P.visual_stim_type{hit, 3}), verifyEqual(testCase, S.visual.pattern_id, P.visual_stim_type{hit, 3}); end
+end
+end
+
 %% ---- output files --------------------------------------------------------
 
 function testFileNameReplacesCharactersWindowsRefuses(testCase)
