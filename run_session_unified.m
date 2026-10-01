@@ -321,6 +321,7 @@ resid = zeros(0, 6);                     % residual raw samples [t wbf wba led t
 % hardware handles
 mainSession = []; lh = [];
 vids = struct('top', [], 'side', []);
+previewFig = [];
 srcs = struct('top', [], 'side', []);
 ph = struct('libsLoaded', false, 'pb', [], 'pr', [], 'camObj', [], 'CN', [], 'aqParams', [], 'bmi', []);
 ledSignalCurrent = zeros(N_block, 1);    % used by the simulator
@@ -431,12 +432,9 @@ if anyCam
     % Live view while the cameras are triggered and logging to disk. Every preview
     % frame is drawn on MATLAB's main thread, which also runs the DAQ callbacks and
     % the live plot; overloading that thread dropped frames on 2026-09-15, so compare
-    % baslerInfo.<cam>.dropped_frames with and without it. Deleting the videoinput
-    % at the end closes the window.
-    if basler.preview
-        if ~isempty(vids.top),  preview(vids.top);  end
-        if ~isempty(vids.side), preview(vids.side); end
-    end
+    % baslerInfo.<cam>.dropped_frames with and without it. Both views share one
+    % window (preview_camera), closed once the cameras are released.
+    if basler.preview, previewFig = preview_camera(basler, vids); end
 end
 
 %% ---------------- Phantom connect / configure ---------------------------
@@ -735,6 +733,7 @@ if ~isempty(vids.side)
 end
 releaseCamera(vids.top,  basler.top.label);  vids.top  = [];   % also closes the DiskLogger file
 releaseCamera(vids.side, basler.side.label); vids.side = [];
+if ~isempty(previewFig) && isvalid(previewFig), delete(previewFig); end
 
 % Compress (ffmpeg, H.264, pending rotation applied) and move the finished videos from
 % the local scratch folder into saveFolder. Done only now, with the cameras released
@@ -843,39 +842,40 @@ end
         hFig = figure('Name', ['run_session_unified: ' FlyType], 'NumberTitle', 'off', ...
                       'Color', 'k', 'Position', [40 40 1450 900], 'InvertHardcopy', 'off');
         ch = plotting.ch;
-        axW = 0.76;                                   % axes width; legends live in the right-hand column
+        axL = 0.10;                                   % left edge: room for the horizontal y labels
+        axW = 0.72;                                   % axes width; legends live in the right-hand column
         if plotting.show_raw
             % top: latest chunk of WBF, WBA, LED driver, right Hutchen
-            hRawAx = axes('Parent', hFig, 'Position', [0.06 0.75 axW 0.18]);
+            hRawAx = axes('Parent', hFig, 'Position', [axL 0.75 axW 0.18]);
             hold(hRawAx, 'on');
             hRawLines = [plot(hRawAx, nan, nan, 'Color', [0 0.5 1], 'LineWidth', 1.2), ...
                          plot(hRawAx, nan, nan, 'g'), ...
                          plot(hRawAx, nan, nan, 'r'), ...
                          plot(hRawAx, nan, nan, 'm')];
             styleAxes(hRawAx);
-            ylabel(hRawAx, {'latest chunk', '(V)'}, 'Color', 'w', 'FontSize', 8);
+            flatYLabel(hRawAx, {'latest chunk', '(V)'}, 8);
             lg = legend(hRawAx, hRawLines, {'WBF', 'WBA (L+R)/2', 'LED driver', niceName(acq.ai_names{ch.hutchen_right})}, ...
                         'TextColor', 'w', 'Color', 'k', 'FontSize', 8);
             placeLegend(lg, 0.95);
             % middle 1: EMG / Hutchen trigger
-            hEmgAx = axes('Parent', hFig, 'Position', [0.06 0.625 axW 0.10]);
+            hEmgAx = axes('Parent', hFig, 'Position', [axL 0.625 axW 0.10]);
             hEmgLine = plot(hEmgAx, nan, nan, 'Color', [0.85 0.85 0.85]);
             styleAxes(hEmgAx);
-            ylabel(hEmgAx, {niceName(acq.ai_names{ch.emg}), '(V)'}, 'Color', 'w', 'FontSize', 8);
+            flatYLabel(hEmgAx, {niceName(acq.ai_names{ch.emg}), '(V)'}, 8);
             % middle 2: arena X and Y position
-            hXAx = axes('Parent', hFig, 'Position', [0.06 0.50 axW 0.10]);
+            hXAx = axes('Parent', hFig, 'Position', [axL 0.50 axW 0.10]);
             hold(hXAx, 'on');
             hXLine = plot(hXAx, nan, nan, 'Color', [1 0.9 0.2]);
             hYLine = plot(hXAx, nan, nan, 'Color', [0.4 0.8 1]);
             styleAxes(hXAx);
-            ylabel(hXAx, {'arena x / y', '(V)'}, 'Color', 'w', 'FontSize', 8);
+            flatYLabel(hXAx, {'arena x / y', '(V)'}, 8);
             lg = legend(hXAx, [hXLine hYLine], {'arena x', 'arena y'}, 'TextColor', 'w', 'Color', 'k', 'FontSize', 8);
             placeLegend(lg, 0.60);
-            ledPos = [0.06 0.37 axW 0.095];
-            sumPos = [0.06 0.07 axW 0.275];
+            ledPos = [axL 0.37 axW 0.095];
+            sumPos = [axL 0.07 axW 0.275];
         else
-            ledPos = [0.06 0.80 axW 0.12];
-            sumPos = [0.06 0.08 axW 0.68];
+            ledPos = [axL 0.80 axW 0.12];
+            sumPos = [axL 0.08 axW 0.68];
         end
 
         % LED driver on its own 0-10 V axis, time-linked to the summary below
@@ -883,7 +883,7 @@ end
         hLED = plot(hLedAx, nan, nan, 'r', 'LineWidth', 1);
         styleAxes(hLedAx);
         set(hLedAx, 'XTickLabel', [], 'YLim', [-0.5 10.5], 'YTick', 0:5:10);
-        ylabel(hLedAx, {'LED driver', '(V)'}, 'Color', 'w', 'FontSize', 8);
+        flatYLabel(hLedAx, {'LED driver', '(V)'}, 8);
 
         % bottom: running summary over the whole experiment
         hSumAx = axes('Parent', hFig, 'Position', sumPos);
@@ -908,7 +908,7 @@ end
         styleAxes(hSumAx);
         set(hSumAx, 'LineWidth', 2, 'FontSize', 9);
         xlabel(hSumAx, 'Time (s)', 'Color', 'w');
-        ylabel(hSumAx, sprintf('\\DeltaWBF (Hz)   \\DeltaWBA x%g (V)', plotting.wba_gain), 'Color', 'w');
+        flatYLabel(hSumAx, {'\DeltaWBF (Hz)', sprintf('\\DeltaWBA x%g (V)', plotting.wba_gain)}, 9);
 
         hs = [hWBA hWBF];
         names = {sprintf('\\DeltaWBA x%g (V)', plotting.wba_gain), '\DeltaWBF (Hz)'};
@@ -931,6 +931,12 @@ end
         lg = legend(hSumAx, hs, names, 'TextColor', 'w', 'Color', 'k', 'FontSize', 8);
         placeLegend(lg, sumPos(2) + sumPos(4));
         drawnow;
+    end
+
+    function flatYLabel(ax, txt, fontSize)
+        % Horizontal y label, one cell per line, right-aligned against the tick labels.
+        ylabel(ax, txt, 'Color', 'w', 'FontSize', fontSize, 'Rotation', 0, ...
+               'HorizontalAlignment', 'right', 'VerticalAlignment', 'middle');
     end
 
     function styleAxes(ax)
