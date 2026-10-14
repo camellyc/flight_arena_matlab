@@ -38,6 +38,7 @@ hw.sim_speed   = 10;      % simulated time runs this many times faster than real
 hw.ni_device   = '';      % '' = first NI device found, or e.g. 'Dev1'
 hw.panel_pause = 0.005;   % s between Panel_com commands
 hw.play_sound_at_end = true;
+hw.alert_on_problems = true;   % beeps + pop-up when a trial ends with a problem: a camera video under 90 % of the expected frames, or a Phantom recording that is missing or empty
 
 % --- Acquisition ---
 acq.SampleRate      = 10000;   % Hz
@@ -90,7 +91,7 @@ basler.Exposure_time           = 9000;  % us; clamped to 90 % of the frame perio
 basler.trigger_ctr             = 'ctr0';
 basler.trigger_initial_delay_s = 0.05;
 basler.format                  = 'Mono8';
-basler.preview                 = false; % live preview window per camera during the run; draws on MATLAB's main thread (with the DAQ callbacks and live plot), so check for dropped frames on the rig
+basler.preview                 = true;  % live view of both cameras (preview_camera) through setup and the run; drawn on MATLAB's main thread (with the DAQ callbacks and live plot), so check baslerInfo.<cam>.dropped_frames
 % Frames stream to disk during acquisition (LoggingMode = 'disk' + DiskLogger), so
 % nothing is buffered in RAM. The stream is UNCOMPRESSED Grayscale AVI, not a choice:
 % the disk logger hands every frame to a MATLAB VideoWriter on the MATLAB thread, and

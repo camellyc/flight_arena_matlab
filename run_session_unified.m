@@ -97,6 +97,7 @@ if hw.simulate
 end
 arenaActive = ~hw.simulate && ~strcmpi(visual.mode, 'none');
 anyCam      = basler.top.enable || basler.side.enable;
+MIN_FRAME_FRACTION = 0.9;   % a camera video with fewer frames than this fraction of expected is flagged (acquisitionProblems)
 
 fs      = acq.SampleRate;
 N_block = round(acq.TrialLength * fs);
@@ -342,6 +343,10 @@ phantom.rec_on_time_s  = nan(acq.blocks, 1);
 phantom.rec_off_time_s = nan(acq.blocks, 1);
 phantom.store_wait_s   = nan(acq.blocks, 1);
 phantom.save_time_s    = nan(acq.blocks, 1);
+phantom.attempted      = false(acq.blocks, 1);   % a recording was expected in this block
+phantom.file_bytes     = nan(acq.blocks, 1);     % size of what was saved (acquisitionProblems)
+phantom.file_count     = nan(acq.blocks, 1);     % files in the TIFF folder, or 1 for a cine
+phantom.init_error     = '';
 phantom.init_ok = false;
 baslerInfo = struct();
 
@@ -354,7 +359,8 @@ aoCol = struct('led', 1, 'phantom', 0);
 if ~hw.simulate
     if anyCam
         try                 % close stale previews first; imaqreset then clears the adaptor
-            closepreview;
+            closepreview;               % the toolbox's own preview windows
+            preview_camera('close');    % a standalone preview_camera window and its cameras
         catch
         end
         imaqreset;
@@ -429,12 +435,18 @@ if anyCam
     end
     if basler.top.enable,  [vids.top,  srcs.top]  = setupBasler('top',  camInfo, files.top_video_scratch);  teardownState('vids') = vids; end
     if basler.side.enable, [vids.side, srcs.side] = setupBasler('side', camInfo, files.side_video_scratch); teardownState('vids') = vids; end
-    % Live view while the cameras are triggered and logging to disk. Every preview
-    % frame is drawn on MATLAB's main thread, which also runs the DAQ callbacks and
+    % Live view: free-running while the rest of the session sets up (DAQ, Phantom,
+    % live figure), paused while armBaslerTrigger switches to the hardware trigger,
+    % then resumed on the running acquisition, where it updates on every trigger.
+    % Every preview frame is drawn on MATLAB's main thread, with the DAQ callbacks and
     % the live plot; overloading that thread dropped frames on 2026-09-15, so compare
-    % baslerInfo.<cam>.dropped_frames with and without it. Both views share one
-    % window (preview_camera), closed once the cameras are released.
-    if basler.preview, previewFig = preview_camera(basler, vids); end
+    % baslerInfo.<cam>.dropped_frames with and without it. (The half-rate sessions of
+    % 2026-10-01..13 were the camera's frame-rate limit, see armBaslerTrigger, not
+    % the preview.) The window is closed once the cameras are released.
+    if basler.preview
+        previewFig = preview_camera(basler, vids);
+        teardownState('previewFig') = previewFig;
+    end
 end
 
 %% ---------------- Phantom connect / configure ---------------------------
@@ -500,6 +512,7 @@ if phantom.enable
     catch ME
         warning('run_session_unified:phantomInit', 'Phantom init failed: %s. Continuing WITHOUT Phantom.', ME.message);
         phantom.enable = false;
+        phantom.init_error = ME.message;
     end
 end
 
@@ -510,9 +523,22 @@ if plotting.enable, initLivePlot(); plotLive = true; end
 
 %% ---------------- run blocks -------------------------------------------
 if anyCam
+    % Free-run ends: pause the preview, arm the trigger, start, resume the preview.
+    for camKey = {'top', 'side'}
+        if ~isempty(vids.(camKey{1}))
+            armBaslerTrigger(vids.(camKey{1}), srcs.(camKey{1}), basler.(camKey{1}).label);
+        end
+    end
     fprintf('Starting Basler acquisition...\n');
     if ~isempty(vids.top),  start(vids.top);  end
     if ~isempty(vids.side), start(vids.side); end
+    if ~isempty(previewFig) && isvalid(previewFig)
+        try
+            preview_camera('resume', previewFig);
+        catch ME
+            warning('run_session_unified:preview', 'Preview not resumed: %s', ME.message);
+        end
+    end
 end
 arenaCmd('stop');
 
@@ -538,6 +564,7 @@ for block = 1:acq.blocks
     % Phantom trigger waveform
     phantomSignal = zeros(N_block, 1);
     doPhantomThisBlock = phantom.enable && (phantom.record_each_block || block == phantom.block_to_record);
+    phantom.attempted(block) = doPhantomThisBlock;
     if doPhantomThisBlock
         trig_idx0 = round(phantom.trigger_time_s * fs) + 1;
         trig_idx1 = min(N_block, trig_idx0 + max(1, round(phantom.trigPulse_s * fs)) - 1);
@@ -647,7 +674,9 @@ for block = 1:acq.blocks
             ts = tic;
             phantom.files{block} = savePhantomCine(block);
             phantom.save_time_s(block) = toc(ts);
-            fprintf('  Phantom saved to %s (%.1f s)\n', phantom.files{block}, phantom.save_time_s(block));
+            [phantom.file_bytes(block), phantom.file_count(block)] = phantomFileSize(phantom.files{block});
+            fprintf('  Phantom saved to %s (%.1f s, %d file(s), %.1f MB)\n', phantom.files{block}, ...
+                    phantom.save_time_s(block), phantom.file_count(block), phantom.file_bytes(block) / 1e6);
         catch ME
             warning('run_session_unified:phantomSave', 'Phantom save failed in block %d: %s', block, ME.message);
         end
@@ -778,11 +807,25 @@ if plotAlive()
 end
 
 %% ---------------- done ------------------------------------------------
+problems = acquisitionProblems(baslerInfo, phantom, MIN_FRAME_FRACTION);
 out = struct('Data', Data, 'params', params, 'phantom', phantom, ...
              'stimTable', stimTable, 'allRandomizedStimOrders', {allRandomizedStimOrders}, ...
-             'baslerInfo', baslerInfo);
+             'baslerInfo', baslerInfo, 'problems', {problems});
 
-if hw.play_sound_at_end && ~hw.simulate, playEndSound(); end
+if ~isempty(problems)
+    % Loud, so a trial with missing video or no Phantom recording is noticed at once.
+    fprintf(2, '\n!!! CHECK THIS TRIAL: %d problem(s) !!!\n', numel(problems));
+    fprintf(2, '  - %s\n', problems{:});
+    if hw.alert_on_problems && ~hw.simulate
+        try
+            warndlg(problems, 'Check this trial');
+        catch
+        end
+        playAlertSound();
+    end
+elseif hw.play_sound_at_end && ~hw.simulate
+    playEndSound();
+end
 fprintf('\nAll done (%.1f s).\n', experimentElapsed_s);
 
 % Last, once MATLAB has nothing else to do, so the window is responsive at once.
@@ -1173,9 +1216,17 @@ end
         vw.FrameRate = basler.fps;
         vid.DiskLogger = vw;
 
-        src.TriggerMode  = 'On';
-        fprintf('  trigger %s on %s, exposure %g us, gain %.3f, gamma %.2f, binning %d\n', ...
-                src.TriggerMode, src.TriggerSource, src.ExposureTime, src.Gain, src.Gamma, cfg.binning);
+        % TriggerMode stays Off until armBaslerTrigger, right before start(): until
+        % then the camera free-runs at basler.fps for the setup preview (set On here,
+        % the preview would show nothing: no trigger pulses yet). armBaslerTrigger
+        % turns this rate limit off again; under the trigger it must not be on.
+        try
+            src.AcquisitionFrameRateEnable = 'True';
+            src.AcquisitionFrameRate       = basler.fps;
+        catch
+        end
+        fprintf('  trigger %s on %s (armed at start), exposure %g us, gain %.3f, gamma %.2f, binning %d\n', ...
+                src.TriggerActivation, src.TriggerSource, src.ExposureTime, src.Gain, src.Gamma, cfg.binning);
         fprintf('  streaming to %s (%s)\n', videoFile, basler.video_profile);
     end
 
@@ -1327,6 +1378,11 @@ for camKey = {'top', 'side'}
     end
 end
 try
+    previewFig = entry(state, 'previewFig');
+    if ~isempty(previewFig) && isvalid(previewFig), delete(previewFig); end
+catch
+end
+try
     if ~isempty(ph.pr), ph.pr.delete(); end
 catch
 end
@@ -1345,6 +1401,81 @@ try
 catch
 end
 closeSessionLog(entry(state, 'log'));   % last, so the lines above are in the log
+end
+
+function problems = acquisitionProblems(baslerInfo, phantom, minFraction)
+% What a user must know about before the next trial: a Basler video with fewer than
+% minFraction of the expected frames, or a Phantom recording that was expected and
+% is missing or empty. One line per problem; empty when all is well.
+problems = {};
+for cam = fieldnames(baslerInfo)'
+    info = baslerInfo.(cam{1});
+    if ~isstruct(info) || ~isfield(info, 'frames'), continue; end
+    if info.frames == 0
+        problems{end + 1} = sprintf('%s: no frames written', info.label); %#ok<AGROW>
+    elseif info.expected_frames > 0 && info.frames < minFraction * info.expected_frames
+        problems{end + 1} = sprintf('%s: %d of ~%d frames (%.0f %%)', info.label, info.frames, ...
+                                    info.expected_frames, 100 * info.frames / info.expected_frames); %#ok<AGROW>
+    end
+end
+if ~isempty(phantom.init_error)
+    problems{end + 1} = sprintf('Phantom: not recorded, init failed (%s)', phantom.init_error);
+end
+for block = find(phantom.attempted(:))'
+    if isempty(phantom.files{block})
+        problems{end + 1} = sprintf('Phantom: block %d not saved (see the warning above)', block); %#ok<AGROW>
+    elseif phantom.file_count(block) == 0 || phantom.file_bytes(block) < 1e6
+        problems{end + 1} = sprintf('Phantom: block %d saved but empty (%d file(s), %.1f MB) in %s', block, ...
+                                    phantom.file_count(block), phantom.file_bytes(block) / 1e6, phantom.files{block}); %#ok<AGROW>
+    end
+    if ~isempty(phantom.gate_col) && isnan(phantom.rec_on_time_s(block))
+        problems{end + 1} = sprintf('Phantom: Recording gate never went ON in block %d (did PCC record?)', block); %#ok<AGROW>
+    end
+end
+end
+
+function [bytes, count] = phantomFileSize(target)
+% Size of a saved Phantom recording: the cine file, or every file in the TIFF folder.
+bytes = 0; count = 0;
+if isfolder(target)
+    d = dir(target);
+    d = d(~[d.isdir]);
+    count = numel(d);
+    bytes = sum([d.bytes]);
+elseif isfile(target)
+    d = dir(target);
+    count = 1;
+    bytes = d.bytes;
+end
+end
+
+function playAlertSound()
+% Six short high beeps: the trial ended with a problem (see acquisitionProblems).
+for k = 1:6
+    sound(sin(2 * pi * 880 * (0:1/8192:0.15)), 8192);
+    pause(0.25);
+end
+end
+
+function armBaslerTrigger(vid, src, label)
+% Switch the camera from free-run to the hardware trigger set up in setupBasler
+% (FrameStart on Line4), right before start(). The preview is paused for the switch
+% (run_session_unified resumes it once the acquisition runs).
+%
+% AcquisitionFrameRateEnable MUST be Off under the trigger. Camera settings outlast
+% the videoinput, and preview_camera's standalone free-run view leaves this limit on
+% at basler.fps; a 100 Hz trigger against the camera's own 100 Hz limit made both
+% cameras reject every other trigger, so every session from 2026-10-01 to the
+% morning of 2026-10-13 has half the frames (50 fps video tagged as 100 fps). With
+% the limit off the cameras report ResultingFrameRate 110 Hz at 9 ms exposure.
+try
+    stoppreview(vid);
+catch
+end
+src.AcquisitionFrameRateEnable = 'False';
+src.TriggerMode = 'On';
+fprintf('%s: trigger %s on %s, frame-rate limit %s\n', ...
+        label, src.TriggerMode, src.TriggerSource, src.AcquisitionFrameRateEnable);
 end
 
 function releaseCamera(vid, label)

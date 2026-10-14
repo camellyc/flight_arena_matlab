@@ -429,7 +429,11 @@ if nargout > 0, varargout{1} = fig; end
         try
             out = run_session_unified(ov);
             assignin('base', 'out', out);
-            setStatus(['Saved ' out.params.files.mat], false);
+            if isfield(out, 'problems') && ~isempty(out.problems)
+                setStatus(['Saved, but CHECK: ' strjoin(out.problems, '; ')], true);
+            else
+                setStatus(['Saved ' out.params.files.mat], false);
+            end
         catch ME
             fprintf(2, 'run_session_gui: the session failed.\n%s\n', getReport(ME, 'extended', 'hyperlinks', 'off'));
             setStatus(['Failed: ' ME.message], true);

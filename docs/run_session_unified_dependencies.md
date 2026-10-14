@@ -54,7 +54,7 @@ The camera objects come from the SDK's demo folder, so that folder must stay on 
 | Function | Product | Introduced | Notes |
 |---|---|---|---|
 | daq.createSession, addAnalogInputChannel, addAnalogOutputChannel, addCounterOutputChannel, queueOutputData, startBackground, RateLimit | Data Acquisition Toolbox | session interface, R2013 era | Legacy session interface. With analog outputs present, NotifyWhenDataAvailableExceeds can only be set after queueOutputData. The rate must be set after all channels are added or the board coerces it silently. |
-| imaqreset, imaqhwinfo, videoinput, triggerconfig, getselectedsource, getdata, closepreview | Image Acquisition Toolbox + gentl adaptor |  | Cameras selected by serial number in the device name; hardware trigger on Line4; TriggerMode set last. |
+| imaqreset, imaqhwinfo, videoinput, triggerconfig, getselectedsource, getdata, closepreview, preview, stoppreview | Image Acquisition Toolbox + gentl adaptor |  | Cameras selected by serial number in the device name; hardware trigger on Line4. TriggerMode stays Off (free-run, for the setup preview) until right before start(), where AcquisitionFrameRateEnable is also switched Off: camera settings persist across videoinputs, and the free-run rate limit left by preview_camera made the cameras reject every other 100 Hz trigger (Oct 2026). |
 | VideoWriter with 'MPEG-4' profile | MATLAB | R2010b | Profile available on this PC: Archival, Grayscale AVI, Indexed AVI, Motion JPEG 2000, Motion JPEG AVI, MPEG-4, Uncompressed AVI |
 | sgtitle | MATLAB | R2018b | Sets the minimum release for the script |
 | movmax | MATLAB | R2016a | Basler recording band in the live plot |
