@@ -97,7 +97,7 @@ if hw.simulate
 end
 arenaActive = ~hw.simulate && ~strcmpi(visual.mode, 'none');
 anyCam      = basler.top.enable || basler.side.enable;
-MIN_FRAME_FRACTION = 0.9;   % a camera video with fewer frames than this fraction of expected is flagged (acquisitionProblems)
+MIN_FRAME_FRACTION = 0.9;   % a camera video with fewer frames than this fraction of expected is flagged (acquisition_problems)
 
 fs      = acq.SampleRate;
 N_block = round(acq.TrialLength * fs);
@@ -807,7 +807,7 @@ if plotAlive()
 end
 
 %% ---------------- done ------------------------------------------------
-problems = acquisitionProblems(baslerInfo, phantom, MIN_FRAME_FRACTION);
+problems = acquisition_problems(baslerInfo, phantom, MIN_FRAME_FRACTION);
 out = struct('Data', Data, 'params', params, 'phantom', phantom, ...
              'stimTable', stimTable, 'allRandomizedStimOrders', {allRandomizedStimOrders}, ...
              'baslerInfo', baslerInfo, 'problems', {problems});
@@ -1401,37 +1401,6 @@ try
 catch
 end
 closeSessionLog(entry(state, 'log'));   % last, so the lines above are in the log
-end
-
-function problems = acquisitionProblems(baslerInfo, phantom, minFraction)
-% What a user must know about before the next trial: a Basler video with fewer than
-% minFraction of the expected frames, or a Phantom recording that was expected and
-% is missing or empty. One line per problem; empty when all is well.
-problems = {};
-for cam = fieldnames(baslerInfo)'
-    info = baslerInfo.(cam{1});
-    if ~isstruct(info) || ~isfield(info, 'frames'), continue; end
-    if info.frames == 0
-        problems{end + 1} = sprintf('%s: no frames written', info.label); %#ok<AGROW>
-    elseif info.expected_frames > 0 && info.frames < minFraction * info.expected_frames
-        problems{end + 1} = sprintf('%s: %d of ~%d frames (%.0f %%)', info.label, info.frames, ...
-                                    info.expected_frames, 100 * info.frames / info.expected_frames); %#ok<AGROW>
-    end
-end
-if ~isempty(phantom.init_error)
-    problems{end + 1} = sprintf('Phantom: not recorded, init failed (%s)', phantom.init_error);
-end
-for block = find(phantom.attempted(:))'
-    if isempty(phantom.files{block})
-        problems{end + 1} = sprintf('Phantom: block %d not saved (see the warning above)', block); %#ok<AGROW>
-    elseif phantom.file_count(block) == 0 || phantom.file_bytes(block) < 1e6
-        problems{end + 1} = sprintf('Phantom: block %d saved but empty (%d file(s), %.1f MB) in %s', block, ...
-                                    phantom.file_count(block), phantom.file_bytes(block) / 1e6, phantom.files{block}); %#ok<AGROW>
-    end
-    if ~isempty(phantom.gate_col) && isnan(phantom.rec_on_time_s(block))
-        problems{end + 1} = sprintf('Phantom: Recording gate never went ON in block %d (did PCC record?)', block); %#ok<AGROW>
-    end
-end
 end
 
 function [bytes, count] = phantomFileSize(target)
