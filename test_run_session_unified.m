@@ -59,6 +59,20 @@ out = run_session_unified(ov);
 verifyEqual(testCase, out.params.opto.stimDurations, [0 750]);
 end
 
+function testRegimeNoneSwitchesOptoOff(testCase)
+% The regime 'none' means no opto at all: opto.mode is forced to 'none' whatever
+% the file or the overrides say, and the regime name goes into the file name.
+ov = simulatedSession(testCase);
+ov.meta = struct('stimulus_regime', 'none');
+ov.opto.mode = 'windows';
+ov.opto.stimDurations = [0 750];
+out = run_session_unified(ov);
+verifyEqual(testCase, out.params.opto.mode, 'none');
+verifyEqual(testCase, out.params.opto.stimDurations, [0 750], 'stimDurations is left as written.');
+verifyEqual(testCase, out.params.meta.stimulus_regime, 'none');
+verifySubstring(testCase, out.params.baseFileName, '_none_');
+end
+
 function testVisualStimTypeSetsModeAndPattern(testCase)
 ov = simulatedSession(testCase);
 ov.meta = struct('visual_stim_type', 'closed_X_open_Y');
@@ -69,10 +83,22 @@ end
 
 function testFileDefaultsAgreeWithTheirPresets(testCase)
 % A file whose preset and fixed values disagree would open the GUI already "changed".
+% Every quick preset must name settings that exist, with values of the file's type.
 S = session_defaults();
 P = session_presets();
+for q = 1:size(P.quick, 1)
+    rows = P.quick{q, 2};
+    for r = 1:size(rows, 1)
+        parts = strsplit(rows{r, 1}, '.');
+        v = getfield(S, parts{:});   % errors if the setting does not exist
+        verifyEqual(testCase, class(rows{r, 2}), class(v), sprintf('%s: %s', P.quick{q, 1}, rows{r, 1}));
+    end
+end
 hit = strcmp(P.stimulus_regime(:, 1), S.meta.stimulus_regime);
-if any(hit), verifyEqual(testCase, S.opto.stimDurations, P.stimulus_regime{hit, 2}); end
+if any(hit)
+    if ~isempty(P.stimulus_regime{hit, 2}), verifyEqual(testCase, S.opto.stimDurations, P.stimulus_regime{hit, 2}); end
+    if ~isempty(P.stimulus_regime{hit, 3}), verifyEqual(testCase, S.opto.mode, P.stimulus_regime{hit, 3}); end
+end
 hit = strcmp(P.visual_stim_type(:, 1), S.meta.visual_stim_type);
 if any(hit)
     verifyEqual(testCase, S.visual.mode, P.visual_stim_type{hit, 2});
@@ -100,8 +126,12 @@ function testSessionLogAndCodeVersionAreSaved(testCase)
 % during the run) and records in params what code produced it.
 ov = simulatedSession(testCase);
 ov.basler = struct('video_scratch_folder', fullfile(ov.saveFolder, 'scratch'));
+ov.meta   = struct('notes', 'wing damaged on the left; second fly of the day');
 out = run_session_unified(ov);
 verifyEqual(testCase, exist(out.params.files.log, 'file'), 2, 'The log must end up in saveFolder.');
+verifySubstring(testCase, fileread(out.params.files.log), ['Notes      : ' ov.meta.notes], ...
+                'meta.notes must be printed, so it is in the log.');
+verifyEqual(testCase, out.params.meta.notes, ov.meta.notes);
 verifyEmpty(testCase, dir(fullfile(ov.basler.video_scratch_folder, '*_log.txt')), 'The log must leave the scratch folder.');
 txt = fileread(out.params.files.log);
 verifySubstring(testCase, txt, 'All done', 'The log must hold the command-window output of the run.');

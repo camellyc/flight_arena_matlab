@@ -1,4 +1,5 @@
- %% Closed loop for Alignment 
+
+%% Closed loop for Alignment 
  CLStripe = 14;
  CL_X_gain = -5;     % closed loop gain
  panel_pause = .005; %  short time to 'space out' commands send to controller

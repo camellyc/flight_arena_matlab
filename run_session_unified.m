@@ -22,7 +22,8 @@ function out = run_session_unified(overrides)
 % MODES (all selected in session_defaults.m)
 %   meta.stimulus_regime / meta.visual_stim_type : a preset name from session_presets.m
 %                 fixes opto.stimDurations / visual.mode + pattern_id (applied after
-%                 the overrides); any other name leaves those settings as written
+%                 the overrides); any other name leaves those settings as written.
+%                 The regime 'none' also sets opto.mode to 'none' (no opto at all)
 %   visual.mode : 'closed_loop_stripe'      pattern + closed-loop X gain
 %                 'closed_loop_oscillating' pattern + Y velocity function
 %                 'none'                    arena untouched (immobilised fly)
@@ -280,6 +281,9 @@ diary(files.log_scratch);
 
 fprintf('\n===== %s =====\n', mfilename);
 fprintf('Fly        : %s\n', FlyType);
+notesText = strtrim(asText(meta.notes));          % meta.notes, so it is in <base>_log.txt too
+if isempty(notesText), notesText = '(none)'; end
+fprintf('Notes      : %s\n', notesText);
 fprintf('Data file  : %s\n', files.mat);
 fprintf('Blocks     : %d x %g s @ %d Hz\n', acq.blocks, acq.TrialLength, fs);
 fprintf('Visual     : %s (pattern %d)\n', visual.mode, visual.pattern_id);
@@ -1471,18 +1475,28 @@ end
 
 function [opto, visual] = applyPresets(meta, opto, visual)
 % The settings a preset meta choice fixes (session_presets.m): meta.stimulus_regime
-% sets opto.stimDurations, meta.visual_stim_type sets visual.mode and pattern_id.
-% Other names (a user-defined regime, an older free-text stim type) leave them as
-% written. run_session_gui greys out the fixed settings and fills in the same values.
+% sets opto.stimDurations (or, for 'none', opto.mode), meta.visual_stim_type sets
+% visual.mode and pattern_id. Other names (a user-defined regime, an older free-text
+% stim type) leave them as written. run_session_gui greys out the fixed settings and
+% fills in the same values.
 P = session_presets();
 hit = strcmp(P.stimulus_regime(:, 1), asText(meta.stimulus_regime));
 if any(hit)
     d = P.stimulus_regime{hit, 2};
-    if ~isequal(opto.stimDurations, d)
-        fprintf('stimulus_regime %s: opto.stimDurations = %s (was %s)\n', ...
-                meta.stimulus_regime, mat2str(d), mat2str(opto.stimDurations));
+    if ~isempty(d)
+        if ~isequal(opto.stimDurations, d)
+            fprintf('stimulus_regime %s: opto.stimDurations = %s (was %s)\n', ...
+                    meta.stimulus_regime, mat2str(d), mat2str(opto.stimDurations));
+        end
+        opto.stimDurations = d;
     end
-    opto.stimDurations = d;
+    m = P.stimulus_regime{hit, 3};
+    if ~isempty(m)
+        if ~strcmpi(opto.mode, m)
+            fprintf('stimulus_regime %s: opto.mode = %s (was %s)\n', meta.stimulus_regime, m, opto.mode);
+        end
+        opto.mode = m;
+    end
 end
 hit = strcmp(P.visual_stim_type(:, 1), asText(meta.visual_stim_type));
 if any(hit)

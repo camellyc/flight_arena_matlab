@@ -44,7 +44,7 @@ fig = run_session_gui();
 verifyEqual(testCase, val(fig, 'saveFolder'), S.saveFolder);
 verifyEqual(testCase, val(fig, 'meta.experiment_name'), S.meta.experiment_name);
 verifyEqual(testCase, val(fig, 'hw.simulate'), S.hw.simulate);
-verifyEqual(testCase, str2num(val(fig, 'opto.stimDurations')), S.opto.stimDurations); %#ok<ST2NM>
+verifyEqual(testCase, str2num(val(fig, 'opto.stimDurations')), shownStimDurations(S)); %#ok<ST2NM>
 verifyEqual(testCase, str2num(val(fig, 'basler.side.gain')), S.basler.side.gain);     %#ok<ST2NM>
 verifyEqual(testCase, str2num(val(fig, 'phantom.window_s:start')), S.phantom.window_s(1)); %#ok<ST2NM>
 verifyEqual(testCase, str2num(val(fig, 'phantom.window_s:end')), S.phantom.window_s(2));   %#ok<ST2NM>
@@ -177,13 +177,14 @@ end
 function testUnreadableNumberIsFlagged(testCase)
 % 'pi' is valid MATLAB that yields a number: it must still be refused, because an
 % entry is only ever read as numeric syntax, never run as code.
+S = run_session_unified('defaults');
 fig = run_session_gui();
 freeStimDurations(fig);
 for bad = {'3000 abc', '[0 3000', 'disp(1)', 'pi'}
     setField(fig, 'opto.stimDurations', bad{1});
     verifyTrue(testCase, isFlagged(fig, 'opto.stimDurations'), sprintf('"%s" must be flagged.', bad{1}));
 end
-setField(fig, 'opto.stimDurations', '[0 3000]');
+setField(fig, 'opto.stimDurations', mat2str(otherStimDurations(S)));
 verifyFalse(testCase, isFlagged(fig, 'opto.stimDurations'), 'Fixing the entry must clear the flag.');
 end
 
@@ -197,12 +198,13 @@ end
 end
 
 function testListSettingMayBeEmptied(testCase)
+% opto.windows_s is always a list in the file (unlike opto.stimDurations, whose shape
+% follows the stimulus regime), so an empty box is a valid entry for it.
 S = run_session_unified('defaults');
-assumeFalse(testCase, isscalar(S.opto.stimDurations), 'opto.stimDurations is no longer a list.');
+assert(~isscalar(S.opto.windows_s), 'This test needs a list setting; opto.windows_s is no longer one.');
 fig = run_session_gui();
-freeStimDurations(fig);
-setField(fig, 'opto.stimDurations', '');
-verifyFalse(testCase, isFlagged(fig, 'opto.stimDurations'));
+setField(fig, 'opto.windows_s', '');
+verifyFalse(testCase, isFlagged(fig, 'opto.windows_s'));
 end
 
 function testResetRestoresTheFileDefaults(testCase)
@@ -213,7 +215,7 @@ freeStimDurations(fig);
 setField(fig, 'opto.stimDurations', 'abc');
 click(fig, 'resetButton');
 verifyEqual(testCase, val(fig, 'meta.flyNumber'), S.meta.flyNumber);
-verifyEqual(testCase, str2num(val(fig, 'opto.stimDurations')), S.opto.stimDurations); %#ok<ST2NM>
+verifyEqual(testCase, str2num(val(fig, 'opto.stimDurations')), shownStimDurations(S)); %#ok<ST2NM>
 verifyFalse(testCase, isMarkedChanged(fig, 'meta.flyNumber'));
 verifyFalse(testCase, isFlagged(fig, 'opto.stimDurations'));
 end
@@ -261,24 +263,118 @@ fig = run_session_gui();
 setField(fig, 'opto.mode', 'randomized');
 for k = 1:size(P.stimulus_regime, 1)
     setField(fig, 'meta.stimulus_regime', P.stimulus_regime{k, 1});
-    verifyEqual(testCase, str2num(val(fig, 'opto.stimDurations')), P.stimulus_regime{k, 2}, P.stimulus_regime{k, 1}); %#ok<ST2NM>
+    if ~isempty(P.stimulus_regime{k, 2})   % [] = as written (the regime 'none' switches opto off instead)
+        verifyEqual(testCase, str2num(val(fig, 'opto.stimDurations')), P.stimulus_regime{k, 2}, P.stimulus_regime{k, 1}); %#ok<ST2NM>
+    end
     verifyFalse(testCase, isEnabled(fig, 'opto.stimDurations'), P.stimulus_regime{k, 1});
     verifyFalse(testCase, isEnabled(fig, 'meta.stimulus_regime:other'), 'The name box is for "user defined" only.');
 end
 freeStimDurations(fig);
+setField(fig, 'opto.mode', 'randomized');   % the last regime may have switched opto off
 verifyTrue(testCase, isEnabled(fig, 'opto.stimDurations'));
 verifyTrue(testCase, isEnabled(fig, 'meta.stimulus_regime:other'));
 end
 
+function testRegimeNoneSwitchesOptoOff(testCase)
+% The regime 'none' fixes opto.mode at 'none' and greys it out, with the rest of
+% the Opto tab; another regime frees the mode again (at whatever it is set to).
+S = run_session_unified('defaults');
+fig = run_session_gui();
+setField(fig, 'opto.mode', 'windows');
+setField(fig, 'meta.stimulus_regime', 'none');
+verifyEqual(testCase, val(fig, 'opto.mode'), 'none');
+verifyFalse(testCase, isEnabled(fig, 'opto.mode'));
+verifyFalse(testCase, isEnabled(fig, 'opto.windows_s'));
+verifyFalse(testCase, isEnabled(fig, 'opto.amplitude_V'));
+verifyEqual(testCase, isMarkedChanged(fig, 'opto.mode'), ~strcmp(S.opto.mode, 'none'), ...
+    'opto.mode is marked exactly when it now differs from the file.');
+verifyFalse(testCase, isFlagged(fig, 'opto.stimDurations'), 'stimDurations is left as written, not blanked.');
+setField(fig, 'meta.stimulus_regime', '10000ms');
+verifyTrue(testCase, isEnabled(fig, 'opto.mode'));
+verifyEqual(testCase, val(fig, 'opto.mode'), 'none', 'Leaving the regime does not pick a mode for you.');
+end
+
+function testRegimeNoneIsSentAsOptoOff(testCase)
+% From the command line too: run_session_unified applies the same rule, so the saved
+% params carry opto.mode = 'none' whatever the window's mode said.
+fig = simulatedGui(testCase, 4);
+setField(fig, 'opto.mode', 'windows');
+setField(fig, 'meta.stimulus_regime', 'none');
+click(fig, 'runButton');
+params = savedParams(testCase);
+verifyEqual(testCase, params.opto.mode, 'none');
+verifyEqual(testCase, params.meta.stimulus_regime, 'none');
+verifySubstring(testCase, params.baseFileName, '_none_');
+end
+
+function testPresetButtonsEnterTheirSettings(testCase)
+% One button per row of session_presets' P.quick: pressing it shows every listed
+% value, marked as changed and still editable, and the rules then fill in what the
+% choices fix (regime 'none' -> opto.mode 'none').
+P = session_presets();
+S = run_session_unified('defaults');
+fig = run_session_gui();
+for q = 1:size(P.quick, 1)
+    name = P.quick{q, 1};
+    rows = P.quick{q, 2};
+    click(fig, ['preset:' name]);
+    verifySubstring(testCase, statusText(fig), name);
+    for r = 1:size(rows, 1)
+        path = rows{r, 1}; want = rows{r, 2};
+        if isempty(findall(fig, 'Tag', path))                      % a pair: two boxes
+            got = [str2double(val(fig, [path ':start'])), str2double(val(fig, [path ':end']))];
+            verifyEqual(testCase, got, want, [name ': ' path]);
+            verifyTrue(testCase, isEnabled(fig, [path ':start']), [name ': ' path ' must stay editable.']);
+        elseif ischar(want) || islogical(want)
+            verifyEqual(testCase, val(fig, path), want, [name ': ' path]);
+        else
+            verifyEqual(testCase, str2num(val(fig, path)), want, [name ': ' path]); %#ok<ST2NM>
+            verifyTrue(testCase, isEnabled(fig, path), [name ': ' path ' must stay editable.']);
+        end
+    end
+end
+% The two lab presets, by name: the rules complete them.
+click(fig, 'preset:opto_standard');
+verifyEqual(testCase, val(fig, 'opto.mode'), 'windows');
+verifyEqual(testCase, val(fig, 'visual.mode'), 'closed_loop_stripe');
+verifyTrue(testCase, isEnabled(fig, 'opto.windows_s'));
+click(fig, 'preset:oscillating_standard');
+verifyEqual(testCase, val(fig, 'opto.mode'), 'none', 'Regime none switches opto off.');
+verifyFalse(testCase, isEnabled(fig, 'opto.mode'));
+verifyEqual(testCase, val(fig, 'visual.mode'), 'closed_loop_oscillating');
+verifyTrue(testCase, isEnabled(fig, 'visual.y_gain'));
+% Still a plain edit afterwards: nothing is locked and nothing was written to the file.
+setField(fig, 'acq.TrialLength', '70');
+verifyEqual(testCase, str2double(val(fig, 'acq.TrialLength')), 70);
+verifyEqual(testCase, run_session_unified('defaults'), S, 'The file defaults must be untouched.');
+click(fig, 'resetButton');
+verifyEqual(testCase, str2double(val(fig, 'acq.TrialLength')), S.acq.TrialLength, 'Reset drops the preset like any edit.');
+end
+
+function testPresetButtonValuesReachTheSession(testCase)
+% What a preset button entered is sent to run_session_unified like typed values.
+fig = simulatedGui(testCase, 4);
+click(fig, 'preset:oscillating_standard');
+setField(fig, 'acq.TrialLength', '4');        % keep the simulated run short
+click(fig, 'runButton');
+params = savedParams(testCase);
+verifyEqual(testCase, params.meta.stimulus_regime, 'none');
+verifyEqual(testCase, params.opto.mode, 'none');
+verifyEqual(testCase, params.visual.mode, 'closed_loop_oscillating');
+verifyEqual(testCase, getfield(savedVar(testCase, 'phantom'), 'window_s'), [20 60]); %#ok<GFLD>
+end
+
 function testUserDefinedRegimeIsNamedAndSent(testCase)
+S = run_session_unified('defaults');
+durations = otherStimDurations(S);
 fig = simulatedGui(testCase, 4);
 freeStimDurations(fig);
 setField(fig, 'meta.stimulus_regime:other', 'myRegime');
-setField(fig, 'opto.stimDurations', '[0 500]');
+setField(fig, 'opto.stimDurations', mat2str(durations));
 click(fig, 'runButton');
 params = savedParams(testCase);
 verifyEqual(testCase, params.meta.stimulus_regime, 'myRegime');
-verifyEqual(testCase, params.opto.stimDurations, [0 500]);
+verifyEqual(testCase, params.opto.stimDurations, durations);
 verifySubstring(testCase, params.baseFileName, '_myRegime');
 end
 
@@ -391,14 +487,18 @@ end
 
 function testRunSendsTheEditsToTheSession(testCase)
 % Text, number, list, checkbox: each must reach the run with the type of its default.
+S = run_session_unified('defaults');
+durations = otherStimDurations(S);
 fig = simulatedGui(testCase, 4);
 setField(fig, 'meta.flyNumber', '7');
 freeStimDurations(fig);
-setField(fig, 'opto.stimDurations', '[500 1000]');
+setField(fig, 'opto.stimDurations', mat2str(durations));
+setField(fig, 'opto.windows_s', '[1 2]');
 click(fig, 'runButton');
 params = savedParams(testCase);
 verifyEqual(testCase, params.meta.flyNumber, '7');
-verifyEqual(testCase, params.opto.stimDurations, [500 1000]);
+verifyEqual(testCase, params.opto.stimDurations, durations);
+verifyEqual(testCase, params.opto.windows_s, [1 2]);
 verifyEqual(testCase, params.acq.TrialLength, 4);
 verifyEqual(testCase, params.hw.simulate, true);
 verifySubstring(testCase, params.baseFileName, 'Fly7');
@@ -449,6 +549,7 @@ start(t);
 click(fig, 'runButton');
 assertTrue(testCase, isKey(seen, 'openAfterClose'), 'The probe never ran during the session.');
 verifyEqual(testCase, seen('runEnabled'), 'off', 'Run must be disabled while a session runs.');
+verifyEqual(testCase, seen('previewEnabled'), 'off', 'Preview must be disabled while a session runs.');
 verifyEqual(testCase, seen('fieldEnabled'), 'off', 'Settings must be locked while a session runs.');
 verifyTrue(testCase, seen('openAfterClose'), 'Closing the window must be refused while a session runs.');
 end
@@ -475,6 +576,77 @@ b = ctrl(fig, 'runButton');
 verifyEqual(testCase, char(b.Enable), 'on', 'Run must be available again after a failed session.');
 end
 
+%% ---- Preview cameras ---------------------------------------------------
+% preview_camera needs the cameras, so these tests put a stub preview_camera.m ahead
+% of the real one; it records the settings it was given and returns a window tagged
+% like the real one.
+
+function testPreviewOpensWithTheWindowsBaslerSettings(testCase)
+stubPreviewCamera(testCase, false);
+fig = run_session_gui();
+setField(fig, 'basler.top.gain', '7');
+click(fig, 'previewButton');
+S = run_session_unified('defaults');
+got = getappdata(groot, 'previewStubBasler');
+assertNotEmpty(testCase, got, 'preview_camera was not called.');
+verifyEqual(testCase, got.top.gain, 7, 'The edited setting must reach the preview.');
+verifyEqual(testCase, got.side, S.basler.side, 'Unchanged settings must be the file values.');
+verifyEqual(testCase, got.fps, S.basler.fps);
+verifyEqual(testCase, numel(previewWindows()), 1);
+b = ctrl(fig, 'previewButton');
+verifyEqual(testCase, char(b.Text), 'Close preview');
+click(fig, 'previewButton');                       % the same button closes it again
+verifyEmpty(testCase, previewWindows());
+verifyEqual(testCase, char(b.Text), 'Preview cameras');
+end
+
+function testClosingThePreviewWindowByHandResetsTheButton(testCase)
+stubPreviewCamera(testCase, false);
+fig = run_session_gui();
+click(fig, 'previewButton');
+w = previewWindows();
+assertEqual(testCase, numel(w), 1);
+close(w);
+b = ctrl(fig, 'previewButton');
+verifyEqual(testCase, char(b.Text), 'Preview cameras');
+end
+
+function testPreviewIsClosedBeforeARun(testCase)
+% The session opens the cameras itself (and shows its own preview), so the
+% standalone one must be gone before it starts.
+stubPreviewCamera(testCase, false);
+fig = simulatedGui(testCase, 4);
+click(fig, 'previewButton');
+assertEqual(testCase, numel(previewWindows()), 1);
+click(fig, 'runButton');
+verifyEmpty(testCase, previewWindows());
+verifySubstring(testCase, statusText(fig), 'Saved');
+b = ctrl(fig, 'previewButton');
+verifyEqual(testCase, char(b.Text), 'Preview cameras');
+verifyEqual(testCase, char(b.Enable), 'on');
+end
+
+function testPreviewFailureIsReportedAndTheWindowRecovers(testCase)
+stubPreviewCamera(testCase, true);
+fig = run_session_gui();
+evalc('click(fig, ''previewButton'')');            % the failure is also printed
+verifySubstring(testCase, statusText(fig), 'No preview: stub: no camera');
+b = ctrl(fig, 'previewButton');
+verifyEqual(testCase, char(b.Text), 'Preview cameras');
+verifyEqual(testCase, char(b.Enable), 'on');
+verifyEmpty(testCase, previewWindows());
+end
+
+function testPreviewRefusesInvalidBaslerEntries(testCase)
+stubPreviewCamera(testCase, false);
+fig = run_session_gui();
+setField(fig, 'basler.fps', 'abc');
+click(fig, 'previewButton');
+verifySubstring(testCase, statusText(fig), 'basler.fps');
+verifyEmpty(testCase, getappdata(groot, 'previewStubBasler'), 'preview_camera must not be called.');
+verifyEmpty(testCase, previewWindows());
+end
+
 %% ---- Save as file defaults ---------------------------------------------
 % These tests rewrite a private copy of session_defaults.m placed ahead of the real
 % one on the path, so the real file is never touched.
@@ -492,7 +664,8 @@ want = {'meta.flyNumber',     [S.meta.flyNumber '7']
         'hw.simulate',        ~S.hw.simulate
         'opto.mode',          otherItem(ctrl(fig, 'opto.mode'))
         'acq.TrialLength',    S.acq.TrialLength + 1
-        'opto.stimDurations', [0 500 750]
+        'opto.stimDurations', otherStimDurations(S)
+        'opto.windows_s',     [10 20]
         'basler.side.gain',   S.basler.side.gain + 1
         'saveFolder',         [S.saveFolder 'newdefault\']};
 for k = 1:size(want, 1)
@@ -529,7 +702,10 @@ click(fig, 'saveDefaultsButton');
 after = splitlines(fileread(file));
 assertEqual(testCase, numel(after), numel(before), 'The number of lines must not change.');
 diffLines = find(~strcmp(before, after));
-verifyNumElements(testCase, diffLines, 2, 'Exactly the two assignments may differ.');
+% A file whose opto.stimDurations disagrees with what its stimulus regime fixes has
+% that one line changed in the window as well, so the save writes it too.
+nLines = 2 + ~isequal(shownStimDurations(S), S.opto.stimDurations);
+verifyNumElements(testCase, diffLines, nLines, 'Exactly the edited assignments may differ.');
 for i = diffLines'
     verifyEqual(testCase, regexp(after{i}, '%.*$', 'match', 'once'), regexp(before{i}, '%.*$', 'match', 'once'), ...
         sprintf('Line %d must keep its comment.', i));
@@ -557,9 +733,15 @@ end
 
 function testSaveDefaultsWithNothingChangedLeavesTheFileAlone(testCase)
 file = tempSettingsFile(testCase);
-before = fileread(file);
+S = run_session_unified('defaults');
 fig = run_session_gui();
 setappdata(fig, 'skipConfirm', true);
+if ~isequal(shownStimDurations(S), S.opto.stimDurations)
+    % The file's opto.stimDurations disagrees with what its stimulus regime fixes, so
+    % the window opens with that one change to save; save it first.
+    click(fig, 'saveDefaultsButton');
+end
+before = fileread(file);
 click(fig, 'saveDefaultsButton');
 verifyEqual(testCase, fileread(file), before);
 verifySubstring(testCase, statusText(fig), 'nothing to save');
@@ -597,6 +779,44 @@ clear('session_defaults');
 rmdir(d, 's');
 end
 
+function stubPreviewCamera(testCase, fail)
+% A stand-in preview_camera.m made the current folder, so it shadows the real one
+% (which needs the cameras). It records the basler struct it is given in
+% getappdata(groot, 'previewStubBasler') and returns a window with the real one's tag;
+% with fail = true it errors instead, as the real one does without cameras.
+realDir = fileparts(which('preview_camera'));
+onPath  = contains([pathsep path pathsep], [pathsep realDir pathsep]);
+if ~onPath, addpath(realDir); end
+d = tempname;
+mkdir(d);
+if fail, body = 'error(''preview_camera:noCamera'', ''stub: no camera'');';
+else,    body = 'fig = figure(''Tag'', ''preview_camera'', ''Visible'', ''off'');';
+end
+fid = fopen(fullfile(d, 'preview_camera.m'), 'w');
+fprintf(fid, ['function fig = preview_camera(basler)\n' ...
+              'fig = [];\n' ...
+              'setappdata(groot, ''previewStubBasler'', basler);\n%s\nend\n'], body);
+fclose(fid);
+if isappdata(groot, 'previewStubBasler'), rmappdata(groot, 'previewStubBasler'); end
+oldDir = cd(d);
+clear('preview_camera');
+testCase.addTeardown(@() removeStub(d, oldDir, realDir, ~onPath));
+assert(strcmp(which('preview_camera'), fullfile(d, 'preview_camera.m')), 'The stub does not shadow the real file.');
+end
+
+function removeStub(d, oldDir, realDir, dropPath)
+delete(findall(groot, 'Type', 'figure', 'Tag', 'preview_camera'));
+if isappdata(groot, 'previewStubBasler'), rmappdata(groot, 'previewStubBasler'); end
+cd(oldDir);
+if dropPath, rmpath(realDir); end
+clear('preview_camera');
+rmdir(d, 's');
+end
+
+function w = previewWindows()
+w = findall(groot, 'Type', 'figure', 'Tag', 'preview_camera');
+end
+
 function fig = simulatedGui(testCase, trialLength)
 % The window set up for a fast, hardware-free session into a scratch folder:
 % trialLength s of synthetic data at 10x real time, one block, no opto, no live plot.
@@ -627,9 +847,11 @@ end
 
 function probeLock(fig, seen)
 b = findall(fig, 'Tag', 'runButton');
+p = findall(fig, 'Tag', 'previewButton');
 c = findall(fig, 'Tag', 'meta.flyNumber');
-seen('runEnabled')   = char(b.Enable);
-seen('fieldEnabled') = char(c.Enable);
+seen('runEnabled')     = char(b.Enable);
+seen('previewEnabled') = char(p.Enable);
+seen('fieldEnabled')   = char(c.Enable);
 close(fig);
 seen('openAfterClose') = isvalid(fig); %#ok<NASGU> -- seen is a handle (containers.Map)
 end
@@ -684,6 +906,32 @@ function freeStimDurations(fig)
 % A preset stimulus regime fixes opto.stimDurations; "user defined" frees it.
 dd = ctrl(fig, 'meta.stimulus_regime');
 setField(fig, 'meta.stimulus_regime', dd.Items{end});
+end
+
+function v = shownStimDurations(S)
+% What the window shows for opto.stimDurations when built from the file: the value
+% the file's stimulus regime fixes when that regime is a preset, else the file value
+% (a user-defined regime, or 'none', leaves stimDurations as written).
+P = session_presets();
+k = find(strcmp(P.stimulus_regime(:, 1), S.meta.stimulus_regime), 1);
+if isempty(k) || isempty(P.stimulus_regime{k, 2})
+    v = S.opto.stimDurations;
+else
+    v = P.stimulus_regime{k, 2};
+end
+end
+
+function v = otherStimDurations(S)
+% A stimDurations entry the window must accept, in the shape of the file default:
+% one number when the file holds one number, a list otherwise, and never the file
+% value itself. The shape follows the stimulus regime, so tests must not assume it.
+d = S.opto.stimDurations;
+if isscalar(d)
+    v = d + 500;
+else
+    v = [0 500 750];
+    if isequal(v, d), v = [0 500]; end
+end
 end
 
 function tf = isEnabled(fig, path)

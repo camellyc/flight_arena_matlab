@@ -18,6 +18,14 @@ function varargout = run_session_gui()
 %          the base workspace, and the changed settings are listed in the command
 %          window when it ends. Errors are shown in the window.
 %   Reset  re-reads the file, dropping your edits.
+%   Preview cameras
+%          opens preview_camera with the Basler settings as entered in the window
+%          (serials, gain, gamma, binning, rotation; the file values where nothing is
+%          changed), the cameras free-running, for placing the fly before a trial.
+%          The button then reads "Close preview" and closes the window again; Run
+%          also closes it first, since the session takes the cameras itself (and
+%          shows its own live view when basler.preview is on). The button is locked
+%          while a session runs.
 %   Save as file defaults
 %          writes every setting that differs from the file into the USER SETTINGS
 %          block of session_defaults.m (values only: comments, alignment
@@ -30,8 +38,12 @@ function varargout = run_session_gui()
 % Not every setting is a plain field:
 %   - The meta choices in session_presets.m are dropdowns. A preset stimulus_regime
 %     fills in opto.stimDurations and greys it out ("user defined..." frees it and
-%     takes the regime name from the box next to it); visual_stim_type does the same
-%     for visual.mode and visual.pattern_id. Positions offer "other..." with a box.
+%     takes the regime name from the box next to it); the regime "none" also sets
+%     opto.mode to none. visual_stim_type does the same for visual.mode and
+%     visual.pattern_id. Positions offer "other..." with a box.
+%   - The preset buttons above the tabs (session_presets.m, P.quick) type a standard
+%     set of values into the window, as if you had entered them: the fields are
+%     marked as changed, stay editable, and nothing is written to the file.
 %   - Settings a choice makes irrelevant are greyed out (trialNum under auto trial
 %     number, the opto fields the opto mode does not use, the Phantom fields when it
 %     is off or in framesync, the visual fields of the other arena mode).
@@ -53,14 +65,16 @@ BAD_COLOR     = [1 0.78 0.78];    % background of an entry that cannot be read
 ERROR_COLOR   = [0.8 0 0];        % status text after a failure
 RUNNING_TEXT  = 'Running...';
 % Only where grid layouts cannot scroll:
-FALLBACK_SIZE   = [760 760];      % window size, wide enough for the extra tabs
+FALLBACK_SIZE   = [760 790];      % window size, wide enough for the extra tabs
 PAGE_ROWS       = 22;             % rows per tab: 22*22 + 21*4 + 20 = 588 px, inside the ~650 px a tab gets
 COMPACT_SPACING = 4;              % px between rows
 % Only where grid rows and columns cannot be sized to 'fit':
 BAR_H   = 26;                     % bottom bar height
+PREVIEW_W = 120;                  % Preview-cameras button width
 SAVE_W  = 150;                    % Save-as-defaults button width
 RESET_W = 150;                    % Reset button width
 RUN_W   = 60;                     % Run button width
+PRESET_W = 150;                   % preset button width
 SECTION_TITLES = struct('meta', 'Meta', 'hw', 'Hardware', 'acq', 'Acquisition', 'visual', 'Visual', ...
                         'opto', 'Opto', 'basler', 'Basler', 'phantom', 'Phantom', 'plotting', 'Plotting');
 TAB_ORDER = {'meta', 'opto', 'phantom', 'basler', 'visual', 'acq', 'hw', 'plotting'};   % others follow
@@ -92,6 +106,7 @@ CHOICES = {'meta.visual_stim_type',     PRESETS.visual_stim_type(:, 1)'
            'basler.top.line_inverter',  {'False', 'True'}
            'basler.side.line_inverter', {'False', 'True'}};
 FOLDERS = {'saveFolder', 'phantom.saveRoot', 'basler.video_scratch_folder'};   % get a Browse button
+QUICK   = PRESETS.quick;                            % {button label, {path, value; ...}}: the preset buttons
 
 % One window per MATLAB: two could start two sessions on the same rig.
 existing = findall(groot, 'Type', 'figure', 'Tag', GUI_TAG);
@@ -104,23 +119,42 @@ end
 
 % HandleVisibility 'off' keeps the window out of the close all a session starts with.
 fig = uifigure('Name', 'Flight arena session', 'Tag', GUI_TAG, 'HandleVisibility', 'off', ...
-               'Position', [100 100 640 760], 'CloseRequestFcn', @(~, ~) onClose());
-root = uigridlayout(fig, [3 1]);
+               'Position', [100 100 640 790], 'CloseRequestFcn', @(~, ~) onClose());
+root = uigridlayout(fig, [4 1]);
 % Layout features newer than R2019a are used only where this MATLAB has them: 'fit'
 % grid sizes (R2019b), label WordWrap (R2020b) and scrollable grid layouts (present by
 % R2021a). Without scrolling, long sections continue on extra tabs instead.
 canFit    = acceptsFit(root);
 canScroll = isprop(root, 'Scrollable');
-if canFit, root.RowHeight = {'fit', '1x', 'fit'}; else, root.RowHeight = {ROW_H, '1x', BAR_H}; end
+if canFit, root.RowHeight = {'fit', 'fit', '1x', 'fit'}; else, root.RowHeight = {ROW_H, ROW_H, '1x', BAR_H}; end
 if ~canScroll, fig.Position(3:4) = FALLBACK_SIZE; end
 topGrid = uigridlayout(root, [1 3], 'Padding', [0 0 0 0]);
 topGrid.ColumnWidth = {LABEL_W, '1x', BROWSE_W};
+% The preset buttons: one per row of session_presets' P.quick, left to right.
+presetGrid = uigridlayout(root, [1 size(QUICK, 1) + 2], 'Padding', [0 0 0 0]);
+if canFit, presetGrid.ColumnWidth = [{LABEL_W}, repmat({'fit'}, 1, size(QUICK, 1)), {'1x'}];
+else,      presetGrid.ColumnWidth = [{LABEL_W}, repmat({PRESET_W}, 1, size(QUICK, 1)), {'1x'}];
+end
+uilabel(presetGrid, 'Text', 'presets', 'Tooltip', 'Type a standard set of values into the window (session_presets.m)');
+for q = 1:size(QUICK, 1)
+    uibutton(presetGrid, 'Text', QUICK{q, 1}, 'Tag', ['preset:' QUICK{q, 1}], ...
+             'Tooltip', presetTip(QUICK{q, 2}), 'ButtonPushedFcn', @(~, ~) onPreset(QUICK{q, 1}));
+end
 tabs = uitabgroup(root);
-bottom = uigridlayout(root, [1 4], 'Padding', [0 0 0 0]);
-if canFit, bottom.ColumnWidth = {'1x', 'fit', 'fit', 'fit'}; else, bottom.ColumnWidth = {'1x', SAVE_W, RESET_W, RUN_W}; end
+bottom = uigridlayout(root, [1 5], 'Padding', [0 0 0 0]);
+if canFit, bottom.ColumnWidth = {'1x', 'fit', 'fit', 'fit', 'fit'};
+else,      bottom.ColumnWidth = {'1x', PREVIEW_W, SAVE_W, RESET_W, RUN_W};
+end
 statusLabel = uilabel(bottom, 'Text', '', 'Tag', 'statusLabel');
 if canFit && isprop(statusLabel, 'WordWrap'), statusLabel.WordWrap = 'on'; end   % grows the 'fit' row
 statusFg = statusLabel.FontColor;
+PREVIEW_OPEN_TEXT   = 'Preview cameras';
+PREVIEW_CLOSE_TEXT  = 'Close preview';
+previewButton = uibutton(bottom, 'Text', PREVIEW_OPEN_TEXT, 'Tag', 'previewButton', ...
+         'Tooltip', ['Live view of the Basler cameras (preview_camera) with the Basler settings ' ...
+                     'entered here, for placing the fly. Closed again before Run.'], ...
+         'ButtonPushedFcn', @(~, ~) onPreview());
+previewFig = [];   % the preview_camera window this button opened, while it is open
 uibutton(bottom, 'Text', 'Save as file defaults', 'Tag', 'saveDefaultsButton', ...
          'Tooltip', 'Write the changed settings into the USER SETTINGS block of session_defaults.m', ...
          'ButtonPushedFcn', @(~, ~) onSaveDefaults());
@@ -325,8 +359,14 @@ if nargout > 0, varargout{1} = fig; end
 
         hit = strcmp(PRESETS.stimulus_regime(:, 1), valueOf('meta.stimulus_regime'));
         if any(hit)
-            show('opto.stimDurations', PRESETS.stimulus_regime{hit, 2});
-            off('opto.stimDurations');
+            if ~isempty(PRESETS.stimulus_regime{hit, 2})
+                show('opto.stimDurations', PRESETS.stimulus_regime{hit, 2});
+                off('opto.stimDurations');
+            end
+            if ~isempty(PRESETS.stimulus_regime{hit, 3})      % 'none': no opto at all
+                show('opto.mode', PRESETS.stimulus_regime{hit, 3});
+                off('opto.mode');
+            end
         end
 
         hit = strcmp(PRESETS.visual_stim_type(:, 1), valueOf('meta.visual_stim_type'));
@@ -376,16 +416,61 @@ if nargout > 0, varargout{1} = fig; end
     end
 
     function show(path, v)
-        % Put the value a preset fixes into its control.
+        % Put the value a preset choice fixes into its control (a number or a
+        % dropdown item), leaving it alone when it already shows that value.
+        k = find(strcmp({fields.path}, path), 1);
+        if isempty(k) || ~any(strcmp(fields(k).kind, {'numeric', 'choice'})), return; end
+        [cur, ok] = readField(fields(k));
+        if ok && sameValue(cur, v), return; end
+        putValue(path, v);
+    end
+
+    function ok = putValue(path, v)
+        % Enter value v into the control(s) of setting path as a user would have
+        % typed it, and mark the field. ok = false when the window has no such
+        % setting, or the control cannot take the value (a dropdown without it, a
+        % read-only setting).
+        ok = false;
         k = find(strcmp({fields.path}, path), 1);
         if isempty(k), return; end
-        c = fields(k).ctrl;
-        switch fields(k).kind
-            case 'numeric', txt = toText('numeric', v);
-            case 'choice',  txt = v; if ~any(strcmp(c.Items, v)), return; end
-            otherwise,      return;
+        f = fields(k);
+        switch f.kind
+            case 'numeric', f.ctrl.Value = toText('numeric', v);
+            case 'char',    f.ctrl.Value = char(v);
+            case 'cellstr', f.ctrl.Value = toText('cellstr', v);
+            case 'logical', f.ctrl.Value = logical(v);
+            case 'onoff',   f.ctrl.Value = strcmpi(v, 'ON');
+            case 'choice'
+                if ~any(strcmp(f.ctrl.Items, v)), return; end
+                f.ctrl.Value = char(v);
+            case 'choiceOther'                                     % the last item frees the text box
+                if any(strcmp(f.ctrl.Items(1:end - 1), v)), f.ctrl.Value = char(v);
+                else, f.ctrl.Value = f.ctrl.Items{end}; f.ctrl2.Value = char(v);
+                end
+            case 'pair'
+                if numel(v) ~= 2, return; end
+                f.ctrl.Value  = toText('numeric', v(1));
+                f.ctrl2.Value = toText('numeric', v(2));
+            otherwise, return;                                     % 'fixed': edit it in the file
         end
-        if ~strcmp(c.Value, txt), c.Value = txt; refreshField(path); end
+        ok = true;
+        refreshField(path);
+    end
+
+    function onPreset(name)
+        % Type the values of the preset button name (session_presets.m, P.quick) into
+        % the window, then let the rules fill in what those choices fix.
+        if running, return; end
+        rows = QUICK{strcmp(QUICK(:, 1), name), 2};
+        skipped = {};
+        for r = 1:size(rows, 1)
+            if ~putValue(rows{r, 1}, rows{r, 2}), skipped{end + 1} = rows{r, 1}; end %#ok<AGROW>
+        end
+        applyRules();
+        msg = sprintf('Preset %s entered (%d setting(s)); edit anything before Run.', name, size(rows, 1) - numel(skipped));
+        if isempty(skipped), setStatus(msg, false);
+        else, setStatus([msg ' Not in this window: ' strjoin(skipped, ', ')], true);
+        end
     end
 
     function setEnabled(f, tf)
@@ -422,6 +507,7 @@ if nargout > 0, varargout{1} = fig; end
                     'Invalid settings');
             return;
         end
+        closePreview();      % releases the cameras: the session opens them itself
         setRunning(true);
         setStatus(RUNNING_TEXT, false);
         drawnow;
@@ -446,6 +532,74 @@ if nargout > 0, varargout{1} = fig; end
         logChanges(changed);
         if isvalid(fig) && strcmp(statusLabel.Text, RUNNING_TEXT)   % interrupted with Ctrl+C
             setStatus('Stopped before the session finished; see the command window.', true);
+        end
+    end
+
+    function onPreview()
+        % Open a free-running preview of the cameras with the Basler settings as
+        % entered in the window, or close the one this button opened. Only the
+        % standalone preview is touched: a running session owns its own (basler.preview)
+        % and has every button locked anyway.
+        if running, return; end
+        if ~isempty(previewFig) && isvalid(previewFig)
+            closePreview();
+            setStatus('Preview closed; the cameras are released.', false);
+            return;
+        end
+        [basler, bad] = baslerSettings();
+        if ~isempty(bad)
+            setStatus(['No preview. Fix the red entries: ' strjoin(bad, ', ')], true);
+            return;
+        end
+        setStatus('Opening the camera preview...', false);
+        drawnow;
+        try
+            previewFig = preview_camera(basler);
+        catch ME
+            previewFig = [];
+            fprintf(2, 'run_session_gui: the preview could not be opened.\n%s\n', ...
+                    getReport(ME, 'extended', 'hyperlinks', 'off'));
+            setStatus(['No preview: ' ME.message], true);
+            if isvalid(fig), uialert(fig, ME.message, 'Preview failed'); end
+            return;
+        end
+        % Closing the preview window by hand (or a session's close all) puts the button back.
+        addlistener(previewFig, 'ObjectBeingDestroyed', @(~, ~) previewClosed());
+        previewButton.Text = PREVIEW_CLOSE_TEXT;
+        setStatus('Preview open (cameras free-running). Close it, or Run: the session takes the cameras itself.', false);
+    end
+
+    function closePreview()
+        % Close the preview this window opened, through its close function so that
+        % preview_camera releases the cameras.
+        if isempty(previewFig) || ~isvalid(previewFig), previewClosed(); return; end
+        try
+            close(previewFig);
+        catch
+        end
+        if ~isempty(previewFig) && isvalid(previewFig), delete(previewFig); end
+        previewClosed();
+    end
+
+    function previewClosed()
+        previewFig = [];
+        if isvalid(fig) && isvalid(previewButton), previewButton.Text = PREVIEW_OPEN_TEXT; end
+    end
+
+    function [basler, bad] = baslerSettings()
+        % The Basler section as the window has it: the file values with every changed
+        % basler.* setting entered over them (what a Run would send for that section).
+        % bad = the basler entries that cannot be read.
+        S = run_session_unified('defaults');
+        basler = S.basler;
+        bad = {};
+        for k = 1:numel(fields)
+            f = fields(k);
+            if ~startsWith(f.path, 'basler.'), continue; end
+            [v, ok] = readField(f);
+            if ~ok, bad{end + 1} = f.path; continue; end %#ok<AGROW>
+            parts = strsplit(f.path, '.');
+            basler = setfield(basler, parts{2:end}, v);
         end
     end
 
@@ -527,6 +681,12 @@ if nargout > 0, varargout{1} = fig; end
 
     function t = sectionTitle(name)
         if isfield(SECTION_TITLES, name), t = SECTION_TITLES.(name); else, t = name; end
+    end
+
+    function t = presetTip(rows)
+        % The settings a preset button enters, one per line, for its tooltip.
+        lines = cellfun(@(p, v) sprintf('%s = %s', p, valueText(v)), rows(:, 1), rows(:, 2), 'UniformOutput', false);
+        t = strjoin(lines, newline);
     end
 
     function browse(c, path)
